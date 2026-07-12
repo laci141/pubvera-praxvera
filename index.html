@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEJM Archive Search (OpenAlex)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: #0a0e27;
+      color: #e0e0e0;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(ellipse at 30% 30%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+                  radial-gradient(ellipse at 70% 70%, rgba(139, 92, 246, 0.12) 0%, transparent 50%),
+                  radial-gradient(ellipse at 50% 100%, rgba(34, 197, 94, 0.08) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: -1;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+    .hero {
+      text-align: center;
+      padding: 60px 20px;
+      background: rgba(30, 30, 50, 0.4);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 20px;
+      margin-bottom: 40px;
+    }
+    .hero h1 {
+      font-size: 2.8rem;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6, #22c55e);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 10px;
+      font-weight: 800;
+    }
+    .hero p {
+      font-size: 1rem;
+      color: #a0aec0;
+      margin-bottom: 30px;
+      line-height: 1.6;
+    }
+    .hero-chips {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      padding: 8px 16px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      border-radius: 20px;
+      color: #93c5fd;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-size: 0.9rem;
+    }
+    .chip:hover {
+      background: rgba(59, 130, 246, 0.25);
+      border-color: rgba(59, 130, 246, 0.6);
+    }
+    .search-panel {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      padding: 32px;
+      margin-bottom: 40px;
+      border-top: 3px solid #3b82f6;
+    }
+    .search-panel h2 {
+      font-size: 1.4rem;
+      margin-bottom: 24px;
+      color: #fff;
+      font-weight: 700;
+    }
+    .search-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+    }
+    .form-group label {
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      font-weight: 500;
+    }
+    .form-group input,
+    .form-group select {
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 1rem;
+    }
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(59, 130, 246, 0.6);
+    }
+    .slider-group {
+      margin-bottom: 20px;
+    }
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: #3b82f6;
+    }
+    .search-btn {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-size: 1rem;
+    }
+    .search-btn:hover {
+      transform: scale(1.02);
+      box-shadow: 0 15px 30px rgba(59, 130, 246, 0.4);
+    }
+    .search-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .spinner {
+      border: 3px solid rgba(59, 130, 246, 0.2);
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      animation: spin 1s linear infinite;
+      margin: 24px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .results-header {
+      font-size: 1.1rem;
+      color: #93c5fd;
+      margin-bottom: 20px;
+      font-weight: 600;
+    }
+    .error-box {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      border-radius: 10px;
+      padding: 14px;
+      color: #fca5a5;
+      margin-top: 20px;
+    }
+    .articles-grid {
+      display: grid;
+      gap: 20px;
+    }
+    .article-card {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 24px;
+      transition: all 0.3s ease;
+      border-left: 4px solid #3b82f6;
+    }
+    .article-card:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+    .article-title {
+      font-size: 1.1rem;
+      color: #93c5fd;
+      margin-bottom: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .article-title:hover {
+      color: #bfdbfe;
+    }
+    .article-meta {
+      font-size: 0.85rem;
+      color: #a0aec0;
+      margin-bottom: 12px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    .badge-oa { background: rgba(34, 197, 94, 0.2); color: #86efac; }
+    .badge-year { background: rgba(139, 92, 246, 0.2); color: #d8b4fe; }
+    .badge-cite { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+    .article-authors {
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      margin-bottom: 12px;
+      font-style: italic;
+    }
+    .article-abstract {
+      font-size: 0.95rem;
+      color: #d1d5db;
+      line-height: 1.6;
+      margin-bottom: 12px;
+      max-height: 4.5em;
+      overflow: hidden;
+      position: relative;
+    }
+    .article-abstract.collapsed::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2em;
+      background: linear-gradient(transparent, rgba(10, 14, 39, 0.8));
+    }
+    .expand-btn {
+      background: none;
+      border: none;
+      color: #93c5fd;
+      cursor: pointer;
+      font-size: 0.85rem;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .expand-btn:hover {
+      color: #bfdbfe;
+    }
+    .cite-bar-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .cite-bar {
+      flex: 1;
+      height: 6px;
+      background: linear-gradient(90deg, #22c55e, #8b5cf6);
+      border-radius: 3px;
+    }
+    .cite-label {
+      font-size: 0.8rem;
+      color: #a0aec0;
+      white-space: nowrap;
+    }
+    .footer {
+      text-align: center;
+      padding: 40px 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.85rem;
+      color: #64748b;
+    }
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 1.8rem; }
+      .search-grid { grid-template-columns: 1fr; }
+      .search-panel { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <h1>🔬 NEJM Archive Search</h1>
+      <p>Search 190,000+ NEJM articles from 1990 to today. Full abstracts, citations, all legal via OpenAlex.</p>
+      <div class="hero-chips">
+        <div class="chip" onclick="prefill('cancer', 2014, 2014)">CAR-T 2014</div>
+        <div class="chip" onclick="prefill('glioblastoma', 2005, 2005)">Glioblastoma 2005</div>
+        <div class="chip" onclick="prefill('covid', 2020, 2020)">COVID 2020</div>
+      </div>
+    </div>
+
+    <div class="search-panel">
+      <h2>Search NEJM</h2>
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label>Keyword</label>
+        <input type="text" id="queryInput" placeholder="e.g., cancer, sepsis, vaccine..." />
+      </div>
+      <div class="search-grid">
+        <div class="form-group">
+          <label>From Year</label>
+          <select id="fromYearSelect"></select>
+        </div>
+        <div class="form-group">
+          <label>To Year</label>
+          <select id="toYearSelect"></select>
+        </div>
+      </div>
+      <div class="search-grid">
+        <div class="form-group">
+          <label>Sort By</label>
+          <select id="sortSelect">
+            <option value="cited">Most cited</option>
+            <option value="date">Newest first</option>
+          </select>
+        </div>
+      </div>
+      <div class="slider-group">
+        <div class="slider-label">
+          <label>Results per page</label>
+          <span id="perPageVal">20</span>
+        </div>
+        <input type="range" id="perPageSlider" min="5" max="50" value="20" oninput="document.getElementById('perPageVal').textContent = this.value" />
+      </div>
+      <button class="search-btn" id="searchBtn" onclick="doSearch()">Search NEJM Archive</button>
+      <div id="resultArea"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Data: OpenAlex (open scholarly metadata). Abstracts from OpenAlex. Not medical advice.
+  </div>
+
+  <script>
+    // Year dropdowns init
+    function initYears() {
+      let from = document.getElementById('fromYearSelect');
+      let to = document.getElementById('toYearSelect');
+      for (let y = 1990; y <= 2026; y++) {
+        from.appendChild(new Option(y, y));
+        to.appendChild(new Option(y, y));
+      }
+      from.value = 2014;
+      to.value = 2026;
+    }
+    initYears();
+
+    function esc(s) {
+      let d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function prefill(q, f, t) {
+      document.getElementById('queryInput').value = q;
+      document.getElementById('fromYearSelect').value = f;
+      document.getElementById('toYearSelect').value = t;
+      doSearch();
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return 'N/A';
+      try {
+        let d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      } catch {
+        return iso;
+      }
+    }
+
+    async function doSearch() {
+      let query = document.getElementById('queryInput').value;
+      let fromYear = parseInt(document.getElementById('fromYearSelect').value);
+      let toYear = parseInt(document.getElementById('toYearSelect').value);
+      let perPage = parseInt(document.getElementById('perPageSlider').value);
+      let sort = document.getElementById('sortSelect').value;
+
+      let resultDiv = document.getElementById('resultArea');
+      resultDiv.innerHTML = '<div class="spinner"></div>';
+      document.getElementById('searchBtn').disabled = true;
+
+      try {
+        let res = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: query,
+            from_year: fromYear,
+            to_year: toYear,
+            per_page: perPage,
+            sort: sort
+          })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        let data = await res.json();
+
+        if (!data.articles || data.articles.length === 0) {
+          resultDiv.innerHTML = '<div class="results-header">No results found.</div>';
+          document.getElementById('searchBtn').disabled = false;
+          return;
+        }
+
+        let maxCites = Math.max(...data.articles.map(a => a.citations));
+        let html = `<div class="results-header">${esc(data.total.toString())} total results · showing ${esc(data.articles.length.toString())}</div>`;
+        html += '<div class="articles-grid">';
+
+        data.articles.forEach((a) => {
+          let oaBadge = a.is_oa ? '<span class="badge badge-oa">Open Access</span>' : '';
+          let citeBar = maxCites > 0 ? Math.ceil((a.citations / maxCites) * 100) : 0;
+          let abstracts = a.abstract || '';
+          let showMore = abstracts.length > 200;
+          let shortAbs = showMore ? abstracts.substring(0, 200) + '...' : abstracts;
+
+          html += `<div class="article-card">
+            <div class="article-title" onclick="window.open('${esc(a.url)}', '_blank')">${esc(a.title)}</div>
+            <div class="article-meta">
+              <span class="badge badge-year">${a.year}</span>
+              <span class="badge badge-cite">📊 ${a.citations} citations</span>
+              ${oaBadge}
+            </div>
+            <div class="article-authors">${esc(a.authors)}</div>
+            <div class="article-abstract collapsed" id="abs_${Math.random()}">
+              ${esc(shortAbs)}
+              ${showMore ? `<button class="expand-btn" onclick="expandAbs(this)">...read more</button>` : ''}
+            </div>
+            <div class="cite-bar-container">
+              <div class="cite-bar" style="width: ${citeBar}%"></div>
+              <span class="cite-label">${a.citations}</span>
+            </div>
+          </div>`;
+        });
+
+        html += '</div>';
+        resultDiv.innerHTML = html;
+      } catch (err) {
+        resultDiv.innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
+      } finally {
+        document.getElementById('searchBtn').disabled = false;
+      }
+    }
+
+    function expandAbs(btn) {
+      let absDiv = btn.closest('.article-abstract');
+      absDiv.classList.remove('collapsed');
+      btn.style.display = 'none';
+    }
+  </script>
+</body>
+</html>
