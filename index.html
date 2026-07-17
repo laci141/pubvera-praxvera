@@ -119,6 +119,10 @@
       background: rgba(255, 255, 255, 0.12);
       border-color: rgba(59, 130, 246, 0.6);
     }
+    .form-group select option {
+      background: #12162e;
+      color: #e0e0e0;
+    }
     .slider-group {
       margin-bottom: 20px;
     }
@@ -196,6 +200,7 @@
       transform: translateY(-2px);
     }
     .article-title {
+      display: block;
       font-size: 1.1rem;
       color: #93c5fd;
       margin-bottom: 8px;
@@ -270,10 +275,44 @@
       background: linear-gradient(90deg, #22c55e, #8b5cf6);
       border-radius: 3px;
     }
-    .cite-label {
+    mark {
+      background: rgba(250, 204, 21, 0.25);
+      color: #fef08a;
+      padding: 0 2px;
+      border-radius: 3px;
+    }
+    .card-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .article-link {
+      color: #7dd3fc;
+      font-size: 0.85rem;
+      text-decoration: none;
+      border-bottom: 1px dotted rgba(125, 211, 252, 0.5);
+      word-break: break-all;
+    }
+    .article-link:hover { color: #bae6fd; }
+    .cite-btn {
+      padding: 6px 14px;
+      background: rgba(139, 92, 246, 0.15);
+      border: 1px solid rgba(139, 92, 246, 0.4);
+      border-radius: 8px;
+      color: #d8b4fe;
+      cursor: pointer;
       font-size: 0.8rem;
-      color: #a0aec0;
+      transition: all 0.3s ease;
       white-space: nowrap;
+    }
+    .cite-btn:hover { background: rgba(139, 92, 246, 0.3); }
+    .cite-btn.copied {
+      background: rgba(34, 197, 94, 0.25);
+      border-color: rgba(34, 197, 94, 0.6);
+      color: #86efac;
     }
     .footer {
       text-align: center;
@@ -358,8 +397,36 @@
 
     function esc(s) {
       let d = document.createElement('div');
-      d.textContent = s;
+      d.textContent = s == null ? '' : s;
       return d.innerHTML;
+    }
+
+    // Attribute-safe escape (also quotes, for use inside href="...")
+    function escAttr(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // Escape EVERYTHING, then re-allow only <i>, <sub>, <sup> (no attributes) — XSS-safe
+    function safeRich(s) {
+      return esc(s || '').replace(/&lt;(\/?)(i|sub|sup)&gt;/gi, '<$1$2>');
+    }
+
+    // Wrap query matches in <mark>. Runs on already-escaped HTML: skips the
+    // allowed tags and HTML entities so it never breaks the markup.
+    function highlight(html, query) {
+      let q = (query || '').trim();
+      if (!q) return html;
+      let escaped = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      let qRe = new RegExp(escaped, 'gi');
+      return html.split(/(<\/?(?:i|sub|sup)>)/gi).map(part => {
+        if (/^<\/?(?:i|sub|sup)>$/i.test(part)) return part;
+        return part.split(/(&[a-zA-Z]+;|&#\d+;)/g).map(seg => {
+          if (seg.charAt(0) === '&') return seg;
+          return seg.replace(qRe, m => `<mark>${m}</mark>`);
+        }).join('');
+      }).join('');
     }
 
     function prefill(q, f, t) {
@@ -378,6 +445,8 @@
         return iso;
       }
     }
+
+    let lastArticles = [];
 
     async function doSearch() {
       let query = document.getElementById('queryInput').value;
@@ -411,32 +480,45 @@
           return;
         }
 
+        lastArticles = data.articles;
         let maxCites = Math.max(...data.articles.map(a => a.citations));
         let html = `<div class="results-header">${esc(data.total.toString())} total results · showing ${esc(data.articles.length.toString())}</div>`;
         html += '<div class="articles-grid">';
 
-        data.articles.forEach((a) => {
+        data.articles.forEach((a, idx) => {
           let oaBadge = a.is_oa ? '<span class="badge badge-oa">Open Access</span>' : '';
           let citeBar = maxCites > 0 ? Math.ceil((a.citations / maxCites) * 100) : 0;
           let abstracts = a.abstract || '';
           let showMore = abstracts.length > 200;
           let shortAbs = showMore ? abstracts.substring(0, 200) + '...' : abstracts;
 
+          let titleInner = highlight(safeRich(a.title), query);
+          let titleHtml = a.url
+            ? `<a class="article-title" href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer">${titleInner}</a>`
+            : `<div class="article-title">${titleInner}</div>`;
+          let linkLabel = a.doi ? `Read article · doi.org/${esc(a.doi)}` : 'Read article';
+          let linkHtml = a.url
+            ? `<a class="article-link" href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer">🔗 ${linkLabel}</a>`
+            : '<span></span>';
+
           html += `<div class="article-card">
-            <div class="article-title" onclick="window.open('${esc(a.url)}', '_blank')">${esc(a.title)}</div>
+            ${titleHtml}
             <div class="article-meta">
               <span class="badge badge-year">${a.year}</span>
               <span class="badge badge-cite">📊 ${a.citations} citations</span>
               ${oaBadge}
             </div>
             <div class="article-authors">${esc(a.authors)}</div>
-            <div class="article-abstract collapsed" id="abs_${Math.random()}">
-              ${esc(shortAbs)}
+            <div class="article-abstract collapsed">
+              ${highlight(safeRich(shortAbs), query)}
               ${showMore ? `<button class="expand-btn" onclick="expandAbs(this)">...read more</button>` : ''}
+            </div>
+            <div class="card-actions">
+              ${linkHtml}
+              <button class="cite-btn" onclick="copyBibtex(${idx}, this)">📋 Cite</button>
             </div>
             <div class="cite-bar-container">
               <div class="cite-bar" style="width: ${citeBar}%"></div>
-              <span class="cite-label">${a.citations}</span>
             </div>
           </div>`;
         });
@@ -454,6 +536,37 @@
       let absDiv = btn.closest('.article-abstract');
       absDiv.classList.remove('collapsed');
       btn.style.display = 'none';
+    }
+
+    function copyBibtex(idx, btn) {
+      let a = lastArticles[idx];
+      if (!a) return;
+      let title = (a.title || '').replace(/<[^>]*>/g, '');
+      let authors = a.authors || '';
+      let etal = /et al\.?\s*$/i.test(authors);
+      authors = authors.replace(/,?\s*et al\.?\s*$/i, '');
+      authors = authors.split(', ').filter(Boolean).join(' and ');
+      if (etal) authors += ' and others';
+      let firstAuthor = (a.authors || '').split(',')[0].trim().split(/\s+/).pop() || '';
+      let key = ('nejm' + (a.year || '') + firstAuthor).replace(/[^a-zA-Z0-9]/g, '');
+      let bib = `@article{${key},
+  title   = {${title}},
+  author  = {${authors}},
+  journal = {New England Journal of Medicine},
+  year    = {${a.year || ''}},
+  doi     = {${a.doi || ''}}
+}`;
+      navigator.clipboard.writeText(bib).then(() => {
+        btn.textContent = '✓ Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = '📋 Cite';
+          btn.classList.remove('copied');
+        }, 1500);
+      }).catch(() => {
+        btn.textContent = '✗ Failed';
+        setTimeout(() => { btn.textContent = '📋 Cite'; }, 1500);
+      });
     }
   </script>
 </body>

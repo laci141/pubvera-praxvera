@@ -168,13 +168,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	} else if req.FromYear > 0 {
 		filters = append(filters, fmt.Sprintf("publication_year:%d", req.FromYear))
 	}
+	// Relevance fix: search ONLY in title + abstract (not full text)
+	if req.Query != "" {
+		filters = append(filters, "title_and_abstract.search:"+req.Query)
+	}
 
 	params := url.Values{}
 	params.Set("filter", strings.Join(filters, ","))
 	params.Set("per-page", fmt.Sprintf("%d", req.PerPage))
-	if req.Query != "" {
-		params.Set("search", req.Query)
-	}
 	// sort
 	if req.Sort == "date" {
 		params.Set("sort", "publication_date:desc")
