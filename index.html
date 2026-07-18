@@ -518,6 +518,26 @@
       return null;
     }
 
+    // Strip HTML tags and decode entities (&amp; → &) for plain-text export fields.
+    // Uses DOMParser: parses without executing scripts or loading resources.
+    function stripTags(s){
+      return new DOMParser().parseFromString(String(s==null?"":s),"text/html").body.textContent.trim();
+    }
+
+    // Rows shaped for CSV/XLSX/BibTeX export (Bibliovera-style): plain text,
+    // no redundant url column (url = https://doi.org/ + doi), abstract capped
+    // at 300 chars. JSON export keeps the full raw rows from lastData.
+    function exportRows(key){
+      const rows=rowsFromLastData(key);
+      if(!rows)return null;
+      return rows.map(r=>{
+        let abs=stripTags(r.abstract);
+        if(abs.length>300)abs=abs.slice(0,300)+"…";
+        return {title:stripTags(r.title),authors:stripTags(r.authors),journal:stripTags(r.journal),
+                year:r.year,citations:r.citations,doi:r.doi,is_oa:r.is_oa,abstract:abs};
+      });
+    }
+
     // ── CSV (RFC4180). Excel-safe: BOM + CRLF + explicit separator hint. ──
     function toCSV(rows){
       const cols=[];
@@ -539,7 +559,7 @@
 
     function downloadCSV(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      const rows=rowsFromLastData(key);
+      const rows=exportRows(key);
       if(!rows||!rows.length){alert("CSV export is not available for this result — use JSON.");return;}
       triggerDownload(new Blob([toCSV(rows)],{type:"text/csv;charset=utf-8"}),filename);
     }
@@ -547,7 +567,7 @@
     // ── XLSX: centered numbers, left-aligned long text, styled header ──
     function downloadXLSX(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      const rows=rowsFromLastData(key);
+      const rows=exportRows(key);
       if(!rows||!rows.length){alert("Excel export is not available for this result — use JSON.");return;}
       const cols=[];
       rows.forEach(r=>Object.keys(r||{}).forEach(k=>{if(!cols.includes(k))cols.push(k);}));
@@ -626,7 +646,7 @@
 
     function downloadBibTeX(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      const rows=rowsFromLastData(key);
+      const rows=exportRows(key);
       const papers=(rows||[]).filter(r=>r&&(r.title||r.display_name));
       if(!papers.length){alert("No citable records in this result — use JSON.");return;}
       triggerDownload(new Blob([toBibTeX(papers)],{type:"application/x-bibtex;charset=utf-8"}),filename);
@@ -819,8 +839,8 @@
         currentSort = 'cite_desc';
         currentFilter = '';
         lastData.search = data.articles.map(a => ({
-          title: a.title, authors: a.authors, year: a.year, citations: a.citations,
-          doi: a.doi, url: a.url, is_oa: a.is_oa, abstract: a.abstract
+          title: a.title, authors: a.authors, journal: a.journal, year: a.year,
+          citations: a.citations, doi: a.doi, url: a.url, is_oa: a.is_oa, abstract: a.abstract
         }));
 
         renderResults(lastData.search, data.total);
@@ -851,7 +871,7 @@
       let bib = `@article{${key},
   title   = {${title}},
   author  = {${authors}},
-  journal = {New England Journal of Medicine},
+  journal = {${a.journal || 'New England Journal of Medicine'}},
   year    = {${a.year || ''}},
   doi     = {${a.doi || ''}}
 }`;

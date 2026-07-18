@@ -93,6 +93,7 @@ type openAlexWork struct {
 type article struct {
 	Title     string `json:"title"`
 	Authors   string `json:"authors"`
+	Journal   string `json:"journal"`
 	Year      int    `json:"year"`
 	Date      string `json:"date"`
 	DOI       string `json:"doi"`
@@ -248,6 +249,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		articles = append(articles, article{
 			Title:     wk.Title,
 			Authors:   authorsStr(wk),
+			Journal:   wk.PrimaryLocation.Source.DisplayName, // journal name from OpenAlex source
 			Year:      wk.PublicationYear,
 			Date:      wk.PublicationDate,
 			DOI:       doi,
