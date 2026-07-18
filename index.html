@@ -197,6 +197,10 @@
       padding:4px 12px;color:#e8eef7;font-size:.78rem;cursor:pointer}
     .qsort:focus{outline:none;border-color:#3b82f6}
     .qsort option{background:#12162e;color:#e0e0e0}
+    .pager{display:flex;justify-content:center;align-items:center;gap:14px;margin-top:24px}
+    .pager .dl:disabled{opacity:.4;cursor:not-allowed}
+    .pager .dl:disabled:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);color:#cdd6ea}
+    .pager-info{font-size:.82rem;color:#99a;white-space:nowrap}
     .articles-grid {
       display: grid;
       gap: 20px;
@@ -524,17 +528,34 @@
       return new DOMParser().parseFromString(String(s==null?"":s),"text/html").body.textContent.trim();
     }
 
-    // Rows shaped for CSV/XLSX/BibTeX export (Bibliovera-style): plain text,
+    // Type-filter predicate shared by the view and the exports.
+    // "other" catches every type outside the named ones (erratum, paratext, …).
+    function typeMatches(t){
+      if(currentType==="all")return true;
+      const known=["article","review","editorial","letter"];
+      if(currentType==="other")return !known.includes(t);
+      return t===currentType;
+    }
+
+    // Raw rows respecting the active type filter — exports follow what is shown.
+    function filteredRows(key){
+      const rows=rowsFromLastData(key);
+      if(!rows)return null;
+      return rows.filter(r=>typeMatches(r.article_type));
+    }
+
+    // Rows shaped for CSV/XLSX export (Bibliovera-style): plain text,
     // no redundant url column (url = https://doi.org/ + doi), abstract capped
     // at 300 chars. JSON export keeps the full raw rows from lastData.
     function exportRows(key){
-      const rows=rowsFromLastData(key);
+      const rows=filteredRows(key);
       if(!rows)return null;
       return rows.map(r=>{
         let abs=stripTags(r.abstract);
         if(abs.length>300)abs=abs.slice(0,300)+"…";
         return {title:stripTags(r.title),authors:stripTags(r.authors),journal:stripTags(r.journal),
-                year:r.year,citations:r.citations,doi:r.doi,is_oa:r.is_oa,abstract:abs};
+                year:r.year,citations:r.citations,doi:r.doi,article_type:r.article_type,
+                is_oa:r.is_oa,abstract:abs};
       });
     }
 
@@ -627,9 +648,13 @@
         const doi=String(r.doi||r.DOI||"").replace(/^https?:\/\/(dx\.)?doi\.org\//i,"").trim();
         const year=Number(r.year||r.publication_year||0);
         const journal=bibEsc(r.journal||r.source||r.venue||"");
-        const authors=Array.isArray(r.authors)
-          ? r.authors.map(a=>bibEsc(typeof a==="string"?a:(a&&(a.name||a.author_name)||""))).filter(Boolean).join(" and ")
-          : bibEsc(r.authors||r.author||"");
+        // Prefer the full author list (" and "-separated, BibTeX convention);
+        // fall back to the truncated display string.
+        const authors=r.authors_full
+          ? bibEsc(r.authors_full)
+          : (Array.isArray(r.authors)
+            ? r.authors.map(a=>bibEsc(typeof a==="string"?a:(a&&(a.name||a.author_name)||""))).filter(Boolean).join(" and ")
+            : bibEsc(r.authors||r.author||""));
         const lines=["@article{"+bibKey(r,i)+","];
         lines.push("  title   = {"+title+"},");
         if(authors) lines.push("  author  = {"+authors+"},");
@@ -646,8 +671,11 @@
 
     function downloadBibTeX(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      const rows=exportRows(key);
-      const papers=(rows||[]).filter(r=>r&&(r.title||r.display_name));
+      // BibTeX needs the full author list, so shape rows here (not exportRows).
+      const rows=(filteredRows(key)||[]).map(r=>({title:stripTags(r.title),
+        authors:stripTags(r.authors),authors_full:r.authors_full,
+        journal:stripTags(r.journal),year:r.year,doi:r.doi}));
+      const papers=rows.filter(r=>r&&(r.title||r.display_name));
       if(!papers.length){alert("No citable records in this result — use JSON.");return;}
       triggerDownload(new Blob([toBibTeX(papers)],{type:"application/x-bibtex;charset=utf-8"}),filename);
     }
@@ -675,6 +703,14 @@
       const bibName=String(filename).replace(/\.json$/i,".bib");
       return '<div class="meta-row"><span class="meta">'+text+'<span class="qcount"></span></span>'+
         '<span class="dl-group">'+
+        '<select class="qsort" id="typeFilter" title="Filter by article type" onchange="applyTypeFilter()">'+
+        '<option value="all">All types</option>'+
+        '<option value="article">Article</option>'+
+        '<option value="review">Review</option>'+
+        '<option value="editorial">Editorial</option>'+
+        '<option value="letter">Letter</option>'+
+        '<option value="other">Other</option>'+
+        '</select>'+
         '<select class="qsort" id="sortResults" title="Sort results" onchange="applySort()">'+
         '<option value="cite_desc">Citations (high→low)</option>'+
         '<option value="cite_asc">Citations (low→high)</option>'+
@@ -694,22 +730,44 @@
     let lastArticles = [];
     let lastQuery = '';
     let lastTotal = 0;
+    let lastPerPage = 20;
+    let currentPage = 1;
     let currentSort = 'cite_desc';
     let currentFilter = '';
+    let currentType = 'all';
 
     // Renders the card list plus its toolbar. Used both by the initial search
     // and by client-side re-sorting (no extra API call).
     function renderResults(articles, total) {
       let resultDiv = document.getElementById('resultArea');
+      let pageRows = rowsFromLastData('search') || [];
       if (!articles || !articles.length) {
-        resultDiv.innerHTML = '<div class="results-header">No results found.</div>';
+        // No rows at all → plain message. Rows exist but the type filter hid them
+        // all → keep the toolbar so the filter can still be changed back.
+        if (!pageRows.length) {
+          resultDiv.innerHTML = '<div class="results-header">No results found.</div>';
+          return;
+        }
+        lastArticles = [];
+        resultDiv.innerHTML = `<div class="results-header">No ${esc(currentType)} articles on this page.</div>` +
+          metaRow(`0 / ${pageRows.length} shown · page ${currentPage} of ${Math.max(1, Math.ceil(lastTotal / lastPerPage))}`,
+                  'search', 'praxvera-search.json');
+        let typeReset = document.getElementById('typeFilter');
+        if (typeReset) typeReset.value = currentType;
+        let sortReset = document.getElementById('sortResults');
+        if (sortReset) sortReset.value = currentSort;
         return;
       }
       lastArticles = articles;
 
       let maxCites = Math.max(...articles.map(a => a.citations || 0));
+      let totalPages = Math.max(1, Math.ceil(lastTotal / lastPerPage));
+      let allOnPage = pageRows.length;
+      let metaText = currentType === 'all'
+        ? `${articles.length} / ${lastTotal} total · page ${currentPage} of ${totalPages}`
+        : `${articles.length} / ${allOnPage} shown · page ${currentPage} of ${totalPages}`;
       let html = `<div class="results-header">${esc(String(total))} total results · showing ${esc(String(articles.length))}</div>`;
-      html += metaRow(articles.length + ' articles', 'search', 'praxvera-search.json');
+      html += metaRow(metaText, 'search', 'praxvera-search.json');
       html += '<div class="articles-grid">';
 
       articles.forEach((a, idx) => {
@@ -751,21 +809,38 @@
       });
 
       html += '</div>';
+
+      // Pager (server-side pagination over the full result set)
+      html += `<div class="pager">
+        <button class="dl" onclick="pageNav(-1)" ${currentPage <= 1 ? 'disabled' : ''}>← Previous</button>
+        <span class="pager-info">Page ${currentPage} of ${totalPages}</span>
+        <button class="dl" onclick="pageNav(1)" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+      </div>`;
       resultDiv.innerHTML = html;
 
       // Restore toolbar state across re-renders.
       let sortEl = document.getElementById('sortResults');
       if (sortEl) sortEl.value = currentSort;
+      let typeEl = document.getElementById('typeFilter');
+      if (typeEl) typeEl.value = currentType;
       let filterEl = resultDiv.querySelector('.qfilter');
       if (filterEl) filterEl.value = currentFilter;
       applyFilter();
     }
 
-    // Re-sorts the already-downloaded result set client-side, then re-renders.
-    function applySort() {
-      let sortEl = document.getElementById('sortResults');
-      if (sortEl) currentSort = sortEl.value;
-      let rows = rowsFromLastData('search');
+    // Fetches an adjacent page, keeping sort/type state, then scrolls back up.
+    async function pageNav(delta) {
+      const totalPages = Math.max(1, Math.ceil(lastTotal / lastPerPage));
+      const target = currentPage + delta;
+      if (target < 1 || target > totalPages) return;
+      await doSearch(target, true);
+      document.querySelector('.search-panel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Recomputes the visible card list from the stored page:
+    // type filter first, then client-side sort, then re-render (no API call).
+    function refreshView() {
+      let rows = filteredRows('search');
       if (!rows) return;
       let sorted = rows.slice();
       const num = v => Number(v) || 0;
@@ -778,6 +853,18 @@
         default:          sorted.sort((a, b) => num(b.citations) - num(a.citations));
       }
       renderResults(sorted, lastTotal);
+    }
+
+    function applySort() {
+      let sortEl = document.getElementById('sortResults');
+      if (sortEl) currentSort = sortEl.value;
+      refreshView();
+    }
+
+    function applyTypeFilter() {
+      let typeEl = document.getElementById('typeFilter');
+      if (typeEl) currentType = typeEl.value;
+      refreshView();
     }
 
     // Live filter: hides cards whose text does not contain the typed term.
@@ -801,7 +888,9 @@
       applyFilter();
     });
 
-    async function doSearch() {
+    // page: which result page to fetch (Search button always starts at 1).
+    // keepState: true on pager navigation — preserves sort/type/filter choices.
+    async function doSearch(page = 1, keepState = false) {
       let query = document.getElementById('queryInput').value;
       let fromYear = parseInt(document.getElementById('fromYearSelect').value);
       let toYear = parseInt(document.getElementById('toYearSelect').value);
@@ -821,6 +910,7 @@
             from_year: fromYear,
             to_year: toYear,
             per_page: perPage,
+            page: page,
             sort: sort
           })
         });
@@ -836,14 +926,21 @@
 
         lastQuery = query;
         lastTotal = data.total;
-        currentSort = 'cite_desc';
-        currentFilter = '';
+        lastPerPage = perPage;
+        currentPage = data.page || page;
+        if (!keepState) {
+          // Fresh search: sync the toolbar sort to the server sort, clear filters.
+          currentSort = (sort === 'date') ? 'year_desc' : 'cite_desc';
+          currentFilter = '';
+          currentType = 'all';
+        }
         lastData.search = data.articles.map(a => ({
-          title: a.title, authors: a.authors, journal: a.journal, year: a.year,
+          title: a.title, authors: a.authors, authors_full: a.authors_full,
+          journal: a.journal, article_type: a.article_type, year: a.year,
           citations: a.citations, doi: a.doi, url: a.url, is_oa: a.is_oa, abstract: a.abstract
         }));
 
-        renderResults(lastData.search, data.total);
+        refreshView();
       } catch (err) {
         resultDiv.innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
       } finally {
@@ -861,11 +958,17 @@
       let a = lastArticles[idx];
       if (!a) return;
       let title = (a.title || '').replace(/<[^>]*>/g, '');
-      let authors = a.authors || '';
-      let etal = /et al\.?\s*$/i.test(authors);
-      authors = authors.replace(/,?\s*et al\.?\s*$/i, '');
-      authors = authors.split(', ').filter(Boolean).join(' and ');
-      if (etal) authors += ' and others';
+      // Full author list when available (" and "-separated, BibTeX convention)
+      let authors;
+      if (a.authors_full) {
+        authors = a.authors_full;
+      } else {
+        authors = a.authors || '';
+        let etal = /et al\.?\s*$/i.test(authors);
+        authors = authors.replace(/,?\s*et al\.?\s*$/i, '');
+        authors = authors.split(', ').filter(Boolean).join(' and ');
+        if (etal) authors += ' and others';
+      }
       let firstAuthor = (a.authors || '').split(',')[0].trim().split(/\s+/).pop() || '';
       let key = ('praxvera' + (a.year || '') + firstAuthor).replace(/[^a-zA-Z0-9]/g, '');
       let bib = `@article{${key},

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,6 +69,7 @@ type openAlexWork struct {
 	ID                     string            `json:"id"`
 	DOI                    string            `json:"doi"`
 	Title                  string            `json:"title"`
+	Type                   string            `json:"type"`
 	PublicationYear        int               `json:"publication_year"`
 	PublicationDate        string            `json:"publication_date"`
 	CitedByCount           int               `json:"cited_by_count"`
@@ -91,16 +93,18 @@ type openAlexWork struct {
 // --- our clean output ---
 
 type article struct {
-	Title     string `json:"title"`
-	Authors   string `json:"authors"`
-	Journal   string `json:"journal"`
-	Year      int    `json:"year"`
-	Date      string `json:"date"`
-	DOI       string `json:"doi"`
-	Abstract  string `json:"abstract"`
-	Citations int    `json:"citations"`
-	URL       string `json:"url"`
-	IsOA      bool   `json:"is_oa"`
+	Title       string `json:"title"`
+	Authors     string `json:"authors"`
+	AuthorsFull string `json:"authors_full"`
+	Journal     string `json:"journal"`
+	ArticleType string `json:"article_type"`
+	Year        int    `json:"year"`
+	Date        string `json:"date"`
+	DOI         string `json:"doi"`
+	Abstract    string `json:"abstract"`
+	Citations   int    `json:"citations"`
+	URL         string `json:"url"`
+	IsOA        bool   `json:"is_oa"`
 }
 
 // decodeAbstract reconstructs text from OpenAlex inverted index
@@ -142,12 +146,24 @@ func authorsStr(w openAlexWork) string {
 	return strings.Join(names, ", ")
 }
 
+// authorsFullStr returns every author, " and "-separated (BibTeX convention).
+func authorsFullStr(w openAlexWork) string {
+	var names []string
+	for _, a := range w.Authorships {
+		if a.Author.DisplayName != "" {
+			names = append(names, a.Author.DisplayName)
+		}
+	}
+	return strings.Join(names, " and ")
+}
+
 // POST /api/search
 type searchRequest struct {
 	Query    string `json:"query"`
 	FromYear int    `json:"from_year,omitempty"`
 	ToYear   int    `json:"to_year,omitempty"`
 	PerPage  int    `json:"per_page,omitempty"`
+	Page     int    `json:"page,omitempty"`
 	Sort     string `json:"sort,omitempty"` // "cited" or "date"
 }
 
@@ -163,6 +179,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PerPage <= 0 || req.PerPage > 50 {
 		req.PerPage = 20
+	}
+	if req.Page < 1 {
+		req.Page = 1
 	}
 
 	// Build OpenAlex filter: NEJM ISSN + optional year range + optional search
@@ -180,6 +199,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	params := url.Values{}
 	params.Set("filter", strings.Join(filters, ","))
 	params.Set("per-page", fmt.Sprintf("%d", req.PerPage))
+	if req.Page > 1 {
+		params.Set("page", strconv.Itoa(req.Page))
+	}
 	// sort
 	if req.Sort == "date" {
 		params.Set("sort", "publication_date:desc")
@@ -247,21 +269,24 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			u = "https://doi.org/" + doi
 		}
 		articles = append(articles, article{
-			Title:     wk.Title,
-			Authors:   authorsStr(wk),
-			Journal:   wk.PrimaryLocation.Source.DisplayName, // journal name from OpenAlex source
-			Year:      wk.PublicationYear,
-			Date:      wk.PublicationDate,
-			DOI:       doi,
-			Abstract:  decodeAbstract(wk.AbstractInvertedIndex),
-			Citations: wk.CitedByCount,
-			URL:       u,
-			IsOA:      wk.OpenAccess.IsOA,
+			Title:       wk.Title,
+			Authors:     authorsStr(wk),
+			AuthorsFull: authorsFullStr(wk),
+			Journal:     wk.PrimaryLocation.Source.DisplayName, // journal name from OpenAlex source
+			ArticleType: wk.Type,
+			Year:        wk.PublicationYear,
+			Date:        wk.PublicationDate,
+			DOI:         doi,
+			Abstract:    decodeAbstract(wk.AbstractInvertedIndex),
+			Citations:   wk.CitedByCount,
+			URL:         u,
+			IsOA:        wk.OpenAccess.IsOA,
 		})
 	}
 
 	out := map[string]interface{}{
 		"total":    oaResp.Meta.Count,
+		"page":     req.Page,
 		"articles": articles,
 	}
 
