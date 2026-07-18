@@ -21,6 +21,9 @@ func main() {
 	if port == "" {
 		port = "8096"
 	}
+	if os.Getenv("OPENALEX_API_KEY") == "" {
+		log.Print("WARNING: OPENALEX_API_KEY not set — OpenAlex requires an API key since 2026-02-13")
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/search", handleSearch)
@@ -182,10 +185,18 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	} else {
 		params.Set("sort", "cited_by_count:desc")
 	}
-	// polite pool
-	params.Set("mailto", "laszlokasa6@gmail.com")
+	// OpenAlex requires an API key since 2026-02-13 (polite pool retired).
+	// Key comes from the environment — never hardcode it (public repo).
+	if apiKey := os.Getenv("OPENALEX_API_KEY"); apiKey != "" {
+		params.Set("api_key", apiKey)
+	}
 
-	apiURL := "https://api.openalex.org/works?" + params.Encode()
+	// Overridable for tests (point at a mock to exercise the error branch)
+	base := os.Getenv("OPENALEX_BASE")
+	if base == "" {
+		base = "https://api.openalex.org"
+	}
+	apiURL := base + "/works?" + params.Encode()
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(apiURL)
@@ -199,6 +210,23 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		http.Error(w, "read error", http.StatusBadGateway)
+		return
+	}
+
+	// OpenAlex error bodies ({"error":...}) unmarshal cleanly into an empty
+	// response, which the UI would show as "No results found." — surface the
+	// real failure instead.
+	if resp.StatusCode != http.StatusOK {
+		snippet := string(body)
+		if len(snippet) > 300 {
+			snippet = snippet[:300]
+		}
+		log.Printf("openalex HTTP %d: %s", resp.StatusCode, snippet)
+		msg := fmt.Sprintf("OpenAlex error (HTTP %d) — try again shortly", resp.StatusCode)
+		if resp.StatusCode == http.StatusConflict {
+			msg = "OpenAlex API key missing or quota exceeded (HTTP 409)"
+		}
+		http.Error(w, msg, http.StatusBadGateway)
 		return
 	}
 
