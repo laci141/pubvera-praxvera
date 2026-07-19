@@ -528,6 +528,23 @@
       return new DOMParser().parseFromString(String(s==null?"":s),"text/html").body.textContent.trim();
     }
 
+    // Live view registry: every module that filters or sorts its table registers a
+    // getter returning the rows exactly as the user currently sees them, plus the
+    // filters that produced them. Without this the exports silently ignore the
+    // on-screen filters and hand back the full result set.
+    const viewProviders={};
+
+    function registerView(key,fn){ viewProviders[key]=fn; }
+
+    function exportRows(key){
+      const p=viewProviders[key];
+      if(typeof p==="function"){
+        const v=p()||{};
+        return {rows:Array.isArray(v.rows)?v.rows:[], scope:(v.filters||[]).join(" · ")};
+      }
+      return {rows:rowsFromLastData(key)||[], scope:""};   // fallback: unfiltered module
+    }
+
     // Type-filter predicate shared by the view and the exports.
     // "other" catches every type outside the named ones (erratum, paratext, …).
     function typeMatches(t){
@@ -544,11 +561,70 @@
       return rows.filter(r=>typeMatches(r.article_type));
     }
 
+    // Searchable plain text of one row — the SAME predicate drives the on-screen
+    // card filter and the exports, so the two can never diverge.
+    function rowSearchText(r){
+      return [r.title,r.authors,r.journal,r.year,r.citations,r.doi,r.article_type,
+              r.abstract,(r.is_oa?"open access":"")].map(v=>stripTags(v)).join(" ").toLowerCase();
+    }
+    function textMatches(r){
+      const q=(currentFilter||"").trim().toLowerCase();
+      return !q||rowSearchText(r).includes(q);
+    }
+
+    // Client-side sort shared by the screen and the exports.
+    function sortRows(rows){
+      const sorted=rows.slice();
+      const num=v=>Number(v)||0;
+      const txt=v=>String(v==null?'':v).toLowerCase();
+      switch(currentSort){
+        case 'cite_asc':  sorted.sort((a,b)=>num(a.citations)-num(b.citations)); break;
+        case 'year_desc': sorted.sort((a,b)=>num(b.year)-num(a.year)); break;
+        case 'year_asc':  sorted.sort((a,b)=>num(a.year)-num(b.year)); break;
+        case 'title_asc': sorted.sort((a,b)=>txt(a.title).localeCompare(txt(b.title))); break;
+        default:          sorted.sort((a,b)=>num(b.citations)-num(a.citations));
+      }
+      return sorted;
+    }
+
+    // Single filter chain: type filter AND text filter AND sort — exactly the
+    // rows the user currently sees on screen, in the same order.
+    function viewRows(){
+      return sortRows((filteredRows('search')||[]).filter(textMatches));
+    }
+
+    const SORT_LABEL={cite_desc:"citations high→low",cite_asc:"citations low→high",
+      year_desc:"year newest→oldest",year_asc:"year oldest→newest",title_asc:"title A→Z"};
+
+    registerView("search",function(){
+      const filters=[];
+      if(currentType!=="all") filters.push("type: "+currentType);
+      if(currentFilter&&currentFilter.trim()) filters.push('filter: "'+currentFilter.trim()+'"');
+      if(currentSort!=="cite_desc") filters.push("sort: "+(SORT_LABEL[currentSort]||currentSort));
+      return {rows:viewRows(), filters:filters};
+    });
+
+    // Provenance line embedded in every exported file: app, analysis, query,
+    // shown-of-total row counts, active filters, source, date.
+    const ANALYSIS_LABEL={search:"Literature search"};
+    function exportHeader(key,rows){
+      const total=(rowsFromLastData(key)||[]).length;
+      const shown=rows?rows.length:0;
+      const parts=["Praxvera export"];
+      if(ANALYSIS_LABEL[key]) parts.push(ANALYSIS_LABEL[key]);
+      if(lastQuery) parts.push('query: "'+lastQuery+'"');
+      parts.push(total&&total!==shown ? ("showing "+shown+" of "+total+" rows") : (shown+" rows"));
+      const sc=exportRows(key).scope;
+      if(sc) parts.push(sc);
+      parts.push("source: OpenAlex");
+      parts.push(new Date().toISOString().slice(0,10));
+      return parts.join(" · ");
+    }
+
     // Rows shaped for CSV/XLSX export (Bibliovera-style): plain text,
     // no redundant url column (url = https://doi.org/ + doi), abstract capped
-    // at 300 chars. JSON export keeps the full raw rows from lastData.
-    function exportRows(key){
-      const rows=filteredRows(key);
+    // at 300 chars. JSON export keeps the full raw rows of the visible view.
+    function shapeRows(rows){
       if(!rows)return null;
       return rows.map(r=>{
         let abs=stripTags(r.abstract);
@@ -560,7 +636,7 @@
     }
 
     // ── CSV (RFC4180). Excel-safe: BOM + CRLF + explicit separator hint. ──
-    function toCSV(rows){
+    function toCSV(rows,header){
       const cols=[];
       rows.forEach(r=>Object.keys(r||{}).forEach(k=>{if(!cols.includes(k))cols.push(k);}));
       const cell=v=>{
@@ -573,26 +649,30 @@
         return s;
       };
       // The leading separator hint tells Excel the delimiter regardless of locale.
-      const lines=["sep=,",cols.map(cell).join(",")];
+      const lines=["sep=,"];
+      if(header) lines.push(cell(header));
+      lines.push(cols.map(cell).join(","));
       rows.forEach(r=>lines.push(cols.map(c=>cell(r?r[c]:"")).join(",")));
       return "﻿"+lines.join("\r\n");
     }
 
     function downloadCSV(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      const rows=exportRows(key);
-      if(!rows||!rows.length){alert("CSV export is not available for this result — use JSON.");return;}
-      triggerDownload(new Blob([toCSV(rows)],{type:"text/csv;charset=utf-8"}),filename);
+      const rows=shapeRows(exportRows(key).rows);
+      if(!rows||!rows.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
+      triggerDownload(new Blob([toCSV(rows,exportHeader(key,rows))],{type:"text/csv;charset=utf-8"}),filename);
     }
 
     // ── XLSX: centered numbers, left-aligned long text, styled header ──
     function downloadXLSX(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      const rows=exportRows(key);
-      if(!rows||!rows.length){alert("Excel export is not available for this result — use JSON.");return;}
+      const rows=shapeRows(exportRows(key).rows);
+      if(!rows||!rows.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
       const cols=[];
       rows.forEach(r=>Object.keys(r||{}).forEach(k=>{if(!cols.includes(k))cols.push(k);}));
-      const aoa=[cols].concat(rows.map(r=>cols.map(c=>{
+      // Row 0: provenance title (merged, grey italic); row 1: blue column header;
+      // data starts at row 2.
+      const aoa=[[exportHeader(key,rows)],cols].concat(rows.map(r=>cols.map(c=>{
         const v=r?r[c]:"";
         if(v===null||v===undefined||v===false)return "";
         if(v===true)return "Yes";
@@ -616,6 +696,9 @@
           const addr=XLSX.utils.encode_cell({r:R,c:C});
           if(!ws[addr])continue;
           if(R===0){
+            ws[addr].s={font:{italic:true,color:{rgb:"808080"}},
+              alignment:{vertical:"center",horizontal:"left",wrapText:false}};
+          }else if(R===1){
             ws[addr].s={font:{bold:true,color:{rgb:"FFFFFF"}},alignment:centerH,
               fill:{fgColor:{rgb:"4472C4"}},
               border:{bottom:{style:"thin",color:{rgb:"999999"}}}};
@@ -626,7 +709,8 @@
         }
       }
       ws["!cols"]=colInfo.map(ci=>({wch:ci.wch}));
-      ws["!freeze"]={xSplit:0,ySplit:1};
+      ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:Math.max(cols.length-1,0)}}];
+      ws["!freeze"]={xSplit:0,ySplit:2};
       const wb=XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb,ws,"Praxvera");
       XLSX.writeFile(wb,filename);
@@ -671,20 +755,26 @@
 
     function downloadBibTeX(key,filename){
       if(!lastData[key]){alert("Run an analysis first.");return;}
-      // BibTeX needs the full author list, so shape rows here (not exportRows).
-      const rows=(filteredRows(key)||[]).map(r=>({title:stripTags(r.title),
+      // BibTeX needs the full author list, so shape rows here (not shapeRows).
+      const rows=exportRows(key).rows.map(r=>({title:stripTags(r.title),
         authors:stripTags(r.authors),authors_full:r.authors_full,
         journal:stripTags(r.journal),year:r.year,doi:r.doi}));
       const papers=rows.filter(r=>r&&(r.title||r.display_name));
-      if(!papers.length){alert("No citable records in this result — use JSON.");return;}
-      triggerDownload(new Blob([toBibTeX(papers)],{type:"application/x-bibtex;charset=utf-8"}),filename);
+      if(!papers.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
+      triggerDownload(new Blob(["% "+exportHeader(key,papers)+"\n\n"+toBibTeX(papers)],
+        {type:"application/x-bibtex;charset=utf-8"}),filename);
     }
 
     // ── JSON + shared download trigger ──
     function downloadJSON(key,filename){
-      const d=lastData[key];
-      if(!d){alert("Run an analysis first.");return;}
-      triggerDownload(new Blob([JSON.stringify(d,null,2)],{type:"application/json"}),filename);
+      if(!lastData[key]){alert("Run an analysis first.");return;}
+      const er=exportRows(key);
+      if(!er.rows.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
+      const payload={export:{app:"Praxvera",analysis:ANALYSIS_LABEL[key]||"",
+        query:lastQuery||"",filters:er.scope,rows_exported:er.rows.length,
+        rows_total:(rowsFromLastData(key)||[]).length,source:"OpenAlex",
+        exported_at:new Date().toISOString()},rows:er.rows};
+      triggerDownload(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),filename);
     }
 
     function triggerDownload(blob,filename){
@@ -756,6 +846,9 @@
         if (typeReset) typeReset.value = currentType;
         let sortReset = document.getElementById('sortResults');
         if (sortReset) sortReset.value = currentSort;
+        let filterReset = resultDiv.querySelector('.qfilter');
+        if (filterReset) filterReset.value = currentFilter;
+        applyFilter();
         return;
       }
       lastArticles = articles;
@@ -842,17 +935,7 @@
     function refreshView() {
       let rows = filteredRows('search');
       if (!rows) return;
-      let sorted = rows.slice();
-      const num = v => Number(v) || 0;
-      const txt = v => String(v == null ? '' : v).toLowerCase();
-      switch (currentSort) {
-        case 'cite_asc':  sorted.sort((a, b) => num(a.citations) - num(b.citations)); break;
-        case 'year_desc': sorted.sort((a, b) => num(b.year) - num(a.year)); break;
-        case 'year_asc':  sorted.sort((a, b) => num(a.year) - num(b.year)); break;
-        case 'title_asc': sorted.sort((a, b) => txt(a.title).localeCompare(txt(b.title))); break;
-        default:          sorted.sort((a, b) => num(b.citations) - num(a.citations));
-      }
-      renderResults(sorted, lastTotal);
+      renderResults(sortRows(rows), lastTotal);
     }
 
     function applySort() {
@@ -867,18 +950,22 @@
       refreshView();
     }
 
-    // Live filter: hides cards whose text does not contain the typed term.
+    // Live filter: hides cards the shared textMatches predicate rejects.
+    // Cards are rendered from lastArticles in order, so index i maps 1:1 —
+    // the visible set is therefore always identical to viewRows().
     function applyFilter() {
-      let q = currentFilter.trim().toLowerCase();
       let cards = document.querySelectorAll('.article-card');
       let visible = 0;
-      cards.forEach(card => {
-        let hit = !q || card.textContent.toLowerCase().includes(q);
+      cards.forEach((card, i) => {
+        let hit = textMatches(lastArticles[i] || {});
         card.style.display = hit ? '' : 'none';
         if (hit) visible++;
       });
+      // The count the user sees is the count the export will contain:
+      // final rows after every filter / total raw rows on this page.
       let countEl = document.querySelector('.qcount');
-      if (countEl) countEl.textContent = cards.length ? ' · ' + visible + ' / ' + cards.length : '';
+      let totalRaw = (rowsFromLastData('search') || []).length;
+      if (countEl) countEl.textContent = totalRaw ? ' · ' + visible + ' / ' + totalRaw + ' rows' : '';
     }
 
     // Delegated so it survives every re-render of the toolbar.
