@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -99,12 +98,14 @@ func TestDecodeAbstract(t *testing.T) {
 	}
 }
 
-// TestDecodeAbstractDuplicatePositionIsNotDeterministic pins the fact that two
-// words claiming the same position have no defined relative order:
-// sort.Slice is not stable, so the surrounding text is guaranteed but the
-// ordering of the tied pair is not. This test asserts only what is actually
-// guaranteed. Run with -count=20 to exercise the randomisation.
-func TestDecodeAbstractDuplicatePositionIsNotDeterministic(t *testing.T) {
+// TestDecodeAbstractDuplicatePositionIsDeterministic pins the tiebreak. Two
+// words at the same position used to render in either order — sort.Slice is
+// unstable and the slice it sorts is built by ranging over a map, whose order
+// Go randomises. Measured at roughly 13% of a thousand runs inside one
+// process, which is exactly the kind of defect that survives a green test
+// suite. The tiebreak on the word itself fixes it; a single call cannot prove
+// that, so this repeats and requires every result to be identical.
+func TestDecodeAbstractDuplicatePositionIsDeterministic(t *testing.T) {
 	inv := map[string][]int{
 		"start": {0},
 		"alpha": {1},
@@ -112,14 +113,11 @@ func TestDecodeAbstractDuplicatePositionIsNotDeterministic(t *testing.T) {
 		"end":   {2},
 	}
 
-	got := decodeAbstract(inv)
-
-	if !strings.HasPrefix(got, "start ") || !strings.HasSuffix(got, " end") {
-		t.Fatalf("decodeAbstract() = %q, want the unambiguous positions to bracket the tie", got)
-	}
-	middle := strings.TrimSuffix(strings.TrimPrefix(got, "start "), " end")
-	if middle != "alpha beta" && middle != "beta alpha" {
-		t.Errorf("decodeAbstract() tied words = %q, want the two tied words in some order", middle)
+	const want = "start alpha beta end"
+	for i := 0; i < 200; i++ {
+		if got := decodeAbstract(inv); got != want {
+			t.Fatalf("decodeAbstract() on run %d = %q, want %q — the tie is not broken deterministically", i, got, want)
+		}
 	}
 }
 
