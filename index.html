@@ -60,6 +60,73 @@
       color: #e8eef7;
       letter-spacing: -0.01em;
     }
+    /* AUTH BAR (Google sign-in) — mirrors .brand-bar in the opposite corner with
+       the same glass recipe, so the two fixed corners read as one pair. Stays
+       hidden until /config.json returns a Supabase config. */
+    .auth-bar {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 900;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.7rem;
+      /* Leaves room for .brand-bar (~130px) plus both insets and a gap, so a long
+         email truncates instead of sliding under the mark on a narrow screen.
+         Percent, not vw: for a fixed element 100% is the layout viewport, while
+         100vw also counts the scrollbar — and that difference is exactly the
+         width by which the two bars would have overlapped. */
+      max-width: calc(100% - 170px);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    /* display:flex above would otherwise defeat the hidden attribute. */
+    .auth-bar[hidden] { display: none; }
+    /* min-width:0 is what lets the ellipsis happen: a flex item defaults to
+       min-width:auto and would refuse to shrink below its text. The email is the
+       part that gives way when the bar runs out of room; the buttons stay whole. */
+    .auth-email {
+      font-size: 0.8rem;
+      color: #cdd6ea;
+      max-width: 34vw;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .auth-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #cdd6ea;
+      padding: 0.3rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .auth-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(59, 130, 246, 0.6);
+      color: #fff;
+    }
+    /* Signing in is the primary action while signed out, so that button borrows
+       the .search-btn gradient; sign-out stays the quiet variant. */
+    .auth-btn.auth-btn-primary {
+      background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+      border-color: transparent;
+      color: #fff;
+    }
+    .auth-btn.auth-btn-primary:hover {
+      box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+    }
     .container { max-width: 1100px; margin: 0 auto; padding: 72px 20px 20px; }
     .hero {
       text-align: center;
@@ -213,6 +280,38 @@
       padding: 14px;
       color: #fca5a5;
       margin-top: 20px;
+    }
+    /* Auth and quota rejections get a card instead of the red one-line box: they
+       carry a heading, an explanation and — for a signed-out visitor — a sign-in
+       button. They are not the user's mistake, so they do not use the red
+       treatment. Same glass recipe as .search-panel, nothing new introduced. */
+    .errcard {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-top: 20px;
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+    }
+    .errcard h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #e8eef7;
+      margin-bottom: 0.35rem;
+    }
+    .errcard p {
+      font-size: 0.86rem;
+      color: #a0aec0;
+      line-height: 1.6;
+    }
+    /* .search-btn is full-width by default (it is the panel's main action);
+       inside the card it is one action among the text. */
+    .errcard .search-btn {
+      width: auto;
+      margin-top: 0.9rem;
+      padding: 0.6rem 1.4rem;
+      font-size: 0.9rem;
     }
     /* ── Export / filter / sort toolbar (export-suite) ── */
     .meta-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;gap:12px;flex-wrap:wrap}
@@ -423,6 +522,20 @@
         -webkit-backdrop-filter: blur(11px);
       }
       .brand-word { font-size: 0.82rem; }
+      /* The two bars share the top row on a phone, so the auth bar shrinks in
+         step with the brand bar and the email is allowed less width — the row
+         has to fit beside the mark without pushing the page sideways. */
+      .auth-bar {
+        top: 0.5rem;
+        right: 0.5rem;
+        gap: 0.35rem;
+        padding: 0.3rem 0.5rem;
+        max-width: calc(100% - 140px);
+        backdrop-filter: blur(11px);
+        -webkit-backdrop-filter: blur(11px);
+      }
+      .auth-email { font-size: 0.7rem; max-width: 30vw; }
+      .auth-btn { font-size: 0.7rem; padding: 0.25rem 0.6rem; }
       .container { padding: 56px 20px 20px; }
     }
   </style>
@@ -442,6 +555,16 @@
     </svg>
     <span class="brand-word">Pubvera</span>
   </a>
+
+  <!-- AUTH BAR — stays hidden until /config.json returns a Supabase config.
+       Without one the page never loads Supabase and behaves exactly as it did
+       before sign-in existed. Wired up by the module script at the end. -->
+  <div class="auth-bar" id="authBar" hidden>
+    <span class="auth-email" id="authEmail" hidden></span>
+    <button type="button" class="auth-btn auth-btn-primary" id="authSignInBtn" hidden>Sign in with Google</button>
+    <button type="button" class="auth-btn" id="authSignOutBtn" hidden>Sign out</button>
+  </div>
+
   <div class="container">
     <div class="hero">
       <h1>🔬 Praxvera</h1>
@@ -1033,6 +1156,93 @@
       applyFilter();
     });
 
+    // Bearer token for the auth layer sitting in front of the API. Read at
+    // REQUEST time, never cached at page load: the Supabase client refreshes the
+    // access token in the background, so a token captured once at load would be
+    // an hour stale on a page left open. window.sb exists only when /config.json
+    // returned a Supabase config (see the module script at the end of this
+    // file) — without it the request goes out exactly as it did before sign-in
+    // existed, with no Authorization header at all.
+    async function authHeaders() {
+      if (!window.sb) return {};
+      try {
+        const { data: { session } } = await window.sb.auth.getSession();
+        if (session) return { 'Authorization': 'Bearer ' + session.access_token };
+      } catch (e) { /* no token: let the server decide — 401 is handled below */ }
+      return {};
+    }
+
+    // Turns a non-2xx response into an Error carrying the status and the parsed
+    // body, so the catch block can tell an auth or quota rejection from an
+    // ordinary OpenAlex failure (see errorHTML). The auth layer in front of the
+    // API is not guaranteed to answer with JSON, so a body that will not parse
+    // must still yield a status-bearing error with the message this page has
+    // always shown.
+    async function httpError(res) {
+      let text = '';
+      try { text = await res.text(); } catch (e) { /* body unreadable */ }
+      let d = null;
+      try { d = JSON.parse(text); } catch (e) { /* plain text or empty */ }
+      let e = new Error((d && d.error) || ('HTTP ' + res.status));
+      e.status = res.status;
+      e.data = d;
+      return e;
+    }
+
+    // Bridge to the module script at the end of this file: the sign-in button
+    // inside a 401 error card is inline HTML, so it needs a global to call.
+    function pubveraSignIn() {
+      if (window.pubveraAuth) window.pubveraAuth.signIn();
+    }
+
+    // resets_at arrives as an ISO timestamp; show it in the reader's own locale
+    // and fall back to the raw value when it is not a parseable date.
+    function resetsAtText(v) {
+      if (!v) return '';
+      let t = new Date(v);
+      return isNaN(t.getTime())
+        ? String(v)
+        : t.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    }
+
+    // Error markup for a failed search. 401/403/503 come from the auth and quota
+    // layer in front of the API and each one means something different to the
+    // user; every other failure keeps the previous behaviour of showing the
+    // error text in the one-line red box.
+    function errorHTML(e) {
+      let st = e && e.status, d = (e && e.data) || {};
+      if (st === 401) {
+        // The raw error ("missing/invalid token") tells the user nothing they
+        // can act on, and the remedy is always the same, so it is not shown.
+        let btn = (window.pubveraAuth && window.pubveraAuth.enabled)
+          ? '<button type="button" class="search-btn" onclick="pubveraSignIn()">Sign in with Google</button>'
+          : '';
+        return '<div class="errcard"><h4>Sign-in required</h4>' +
+          '<p>Please sign in to run this search.</p>' + btn + '</div>';
+      }
+      if (st === 403) {
+        // A valid token that is not allowed through: either the plan does not
+        // include this app, or the period's quota is used up. Upgrading is the
+        // way out of both, but prices belong on the pricing page, not here.
+        if (String(d.reason || '') === 'app_locked') {
+          return '<div class="errcard"><h4>Not included in your plan</h4>' +
+            '<p>Praxvera is not part of your current plan. Upgrading your plan unlocks it.</p></div>';
+        }
+        let msg = 'You have used up the searches included in your plan for this period.';
+        let resets = resetsAtText(d.resets_at);
+        if (resets) msg += ' Your quota resets on ' + resets + '.';
+        msg += ' Upgrading your plan raises the limit.';
+        return '<div class="errcard"><h4>Search limit reached</h4><p>' + esc(msg) + '</p></div>';
+      }
+      if (st === 503) {
+        // The quota service could not be reached. The request was not rejected
+        // and the user did nothing wrong, so this must not read as a failure.
+        return '<div class="errcard"><h4>Temporarily unavailable</h4>' +
+          '<p>The service is temporarily unavailable. Please try again in a moment.</p></div>';
+      }
+      return '<div class="error-box">Error: ' + esc(e && e.message ? e.message : 'Unknown error') + '</div>';
+    }
+
     // page: which result page to fetch (Search button always starts at 1).
     // keepState: true on pager navigation — preserves sort/type/filter choices.
     async function doSearch(page = 1, keepState = false) {
@@ -1047,9 +1257,13 @@
       document.getElementById('searchBtn').disabled = true;
 
       try {
+        // Headers first, before the request is built: getSession() may quietly
+        // refresh an expired token, and the token must be read per request
+        // rather than captured once at page load.
+        let headers = Object.assign({ 'Content-Type': 'application/json' }, await authHeaders());
         let res = await fetch('/api/search', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: headers,
           body: JSON.stringify({
             query: query,
             from_year: fromYear,
@@ -1059,7 +1273,7 @@
             sort: sort
           })
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw await httpError(res);
         let data = await res.json();
 
         if (!data.articles || data.articles.length === 0) {
@@ -1087,7 +1301,7 @@
 
         refreshView();
       } catch (err) {
-        resultDiv.innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
+        resultDiv.innerHTML = errorHTML(err);
       } finally {
         document.getElementById('searchBtn').disabled = false;
       }
@@ -1135,6 +1349,79 @@
         setTimeout(() => { btn.textContent = '📋 Cite'; }, 1500);
       });
     }
+  </script>
+
+  <!-- GOOGLE SIGN-IN (Supabase).
+       Module scope, so the classic script above reaches it through window.sb /
+       window.pubveraAuth. Config comes from /config.json (handleRoot in main.go).
+       When it is missing or incomplete — the state of the current deployment
+       until the environment variables are set — Supabase is never loaded at all
+       and the page runs unauthenticated: no sign-in UI, no Authorization header,
+       everything else unchanged. -->
+  <script type="module">
+    const bar     = document.getElementById('authBar');
+    const emailEl = document.getElementById('authEmail');
+    const inBtn   = document.getElementById('authSignInBtn');
+    const outBtn  = document.getElementById('authSignOutBtn');
+
+    // Installed first so the search and the 401 error card can always ask, even
+    // if the config fetch or the module import below never completes.
+    window.pubveraAuth = { enabled: false, signIn() {}, signOut() {} };
+
+    async function initAuth() {
+      let cfg;
+      try {
+        const res = await fetch('/config.json', { cache: 'no-store' });
+        if (!res.ok) return;
+        cfg = await res.json();
+      } catch (e) {
+        return; // unauthenticated mode
+      }
+      const url = String((cfg && cfg.supabase_url) || '').trim();
+      const key = String((cfg && cfg.supabase_anon_key) || '').trim();
+      // Either field empty: skip Supabase entirely.
+      if (!url || !key) return;
+
+      // Dynamic import, not a static one: a static import runs before the fetch
+      // above, so an unconfigured page would still pay for the library.
+      const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+      const sb = createClient(url, key);
+      window.sb = sb;
+
+      window.pubveraAuth = {
+        enabled: true,
+        signIn: async () => {
+          const { error } = await sb.auth.signInWithOAuth({
+            provider: 'google',
+            // Back to the origin the user is actually on, so a sign-in started
+            // on praxvera.pubvera.com returns to praxvera.pubvera.com.
+            options: { redirectTo: window.location.origin }
+          });
+          if (error) alert('Sign-in failed: ' + error.message);
+        },
+        signOut: () => sb.auth.signOut()
+      };
+
+      inBtn.onclick  = () => window.pubveraAuth.signIn();
+      outBtn.onclick = () => window.pubveraAuth.signOut();
+
+      function render(session) {
+        const signedIn = !!session;
+        emailEl.textContent = signedIn ? (session.user && session.user.email || 'Signed in') : '';
+        emailEl.hidden = !signedIn;
+        outBtn.hidden  = !signedIn;
+        inBtn.hidden   = signedIn;
+        bar.hidden = false; // only now: an empty bar must never flash first
+      }
+
+      const { data: { session } } = await sb.auth.getSession();
+      render(session);
+      // Fires on sign-in, sign-out and background token refresh, including the
+      // redirect back from Google, which lands here as a new session.
+      sb.auth.onAuthStateChange((_event, s) => render(s));
+    }
+
+    initAuth().catch(() => { /* stay in unauthenticated mode */ });
   </script>
 </body>
 </html>

@@ -43,12 +43,43 @@ func main() {
 	}
 }
 
+// browserConfig is the bootstrap payload /config.json hands to the page so it
+// can build its Supabase client. SupabaseAnonKey is the PUBLISHABLE
+// (browser-side) key, never the secret one: it is designed to be visible in a
+// browser and Row Level Security is what protects the data. It is still never
+// logged.
+type browserConfig struct {
+	SupabaseURL     string `json:"supabase_url"`
+	SupabaseAnonKey string `json:"supabase_anon_key"`
+}
+
 func handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	switch r.URL.Path {
+	case "/config.json":
+		// Deliberately NOT under /api/: Caddy protects /api/* with forward_auth,
+		// and the page needs this config BEFORE it can sign anyone in. Serving it
+		// from a protected path would make the requirement circular and force a
+		// special-case exception into the Caddy matcher.
+		//
+		// A missing variable is not an error. An empty pair with status 200 is a
+		// valid answer that puts the page into unauthenticated mode, which is what
+		// keeps local development and the current deployment working until the
+		// environment is set.
+		supaURL := strings.TrimSpace(os.Getenv("SUPABASE_URL"))
+		supaKey := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
+		if supaURL == "" || supaKey == "" {
+			supaURL, supaKey = "", ""
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		// Never cache: a stale key surviving a key rotation would be hard to
+		// diagnose from the browser side.
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey})
+	case "/":
+		http.ServeFile(w, r, "index.html")
+	default:
 		http.NotFound(w, r)
-		return
 	}
-	http.ServeFile(w, r, "index.html")
 }
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
