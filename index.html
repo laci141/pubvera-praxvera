@@ -14,6 +14,21 @@
       background: #0a0e27;
       color: #e0e0e0;
       overflow-x: hidden;
+      /* Clearance for the fixed .brand-bar, derived rather than measured, so it
+         tracks the bar when the root font size is not 16px.
+           1rem   — the bar's vertical padding (0.5rem top + 0.5rem bottom)
+           1px    — its border-bottom
+         plus whichever child is tallest:
+           22px       — the SVG mark, a fixed attribute size, exact
+           1.6rem+2px — the auth button: 1rem line box + 0.6rem padding + 2px
+                        border. The 1rem line box is an estimate rounded UP from
+                        the rendered height: line-height is `normal`, which the
+                        font decides, so 0.75rem cannot be turned into a line box
+                        exactly. Rounded up on purpose — under-reserving slides
+                        content under the bar, over-reserving costs a pixel.
+         The wordmark's line box (0.95rem, same `normal` line-height) is always
+         shorter than the button term, so it never wins the max(). */
+      padding-top: calc(1rem + 1px + max(22px, 1.6rem + 2px));
     }
     body::before {
       content: '';
@@ -28,30 +43,34 @@
       pointer-events: none;
       z-index: -1;
     }
-    /* BRAND BAR — Pubvera mark + wordmark, links back to the hub. The SVG is
-       inlined rather than linked from pubvera.com so the app does not depend on
-       Cloudflare Pages being up, and so the mark can inherit currentColor. */
+    /* BRAND BAR — one full-width fixed bar: Pubvera mark + wordmark on the left,
+       auth controls on the right. The SVG is inlined rather than linked from
+       pubvera.com so the app does not depend on Cloudflare Pages being up, and
+       so the mark can inherit currentColor. */
     .brand-bar {
       position: fixed;
-      top: 1rem;
-      left: 1rem;
+      top: 0;
+      left: 0;
+      right: 0;
       z-index: 900;
       display: flex;
       align-items: center;
       gap: 0.45rem;
-      padding: 0.5rem 0.9rem;
+      padding: 0.5rem 1rem;
       background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 999px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       backdrop-filter: blur(15px);
       -webkit-backdrop-filter: blur(15px);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-      text-decoration: none;
-      transition: border-color 0.2s, transform 0.2s;
     }
-    .brand-bar:hover {
-      border-color: rgba(96, 165, 250, 0.5);
-      transform: translateY(-1px);
+    /* The link is the mark plus the word only — the auth controls sit in the
+       same bar but are not part of it. */
+    .brand-link {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      text-decoration: none;
+      min-width: 0;
     }
     .brand-mark { color: #60a5fa; flex-shrink: 0; }
     .brand-word {
@@ -59,31 +78,18 @@
       font-weight: 700;
       color: #e8eef7;
       letter-spacing: -0.01em;
+      transition: color 0.2s;
     }
-    /* AUTH BAR (Google sign-in) — mirrors .brand-bar in the opposite corner with
-       the same glass recipe, so the two fixed corners read as one pair. Stays
-       hidden until /config.json returns a Supabase config. */
+    .brand-link:hover .brand-word { color: #60a5fa; }
+    /* AUTH BAR (Google sign-in) — the right-hand group of the brand bar, pushed
+       over by margin-left:auto. Stays hidden until /config.json returns a
+       Supabase config. */
     .auth-bar {
-      position: fixed;
-      top: 1rem;
-      right: 1rem;
-      z-index: 900;
+      margin-left: auto;
+      min-width: 0;
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      padding: 0.4rem 0.7rem;
-      /* Leaves room for .brand-bar (~130px) plus both insets and a gap, so a long
-         email truncates instead of sliding under the mark on a narrow screen.
-         Percent, not vw: for a fixed element 100% is the layout viewport, while
-         100vw also counts the scrollbar — and that difference is exactly the
-         width by which the two bars would have overlapped. */
-      max-width: calc(100% - 170px);
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 999px;
-      backdrop-filter: blur(15px);
-      -webkit-backdrop-filter: blur(15px);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     }
     /* display:flex above would otherwise defeat the hidden attribute. */
     .auth-bar[hidden] { display: none; }
@@ -127,10 +133,13 @@
     .auth-btn.auth-btn-primary:hover {
       box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
     }
-    .container { max-width: 1100px; margin: 0 auto; padding: 72px 20px 20px; }
+    /* 72px used to clear the floating brand pill; body now reserves the bar, so
+       the reduction is split between here and .hero — neither alone, or the
+       title would end up flush against the card edge. */
+    .container { max-width: 1100px; margin: 0 auto; padding: 32px 20px 20px; }
     .hero {
       text-align: center;
-      padding: 36px 20px;
+      padding: 28px 20px;
       background: rgba(30, 30, 50, 0.4);
       backdrop-filter: blur(15px);
       -webkit-backdrop-filter: blur(15px);
@@ -499,7 +508,7 @@
         -webkit-backdrop-filter: blur(11px);
       }
       .hero {
-        padding: 28px 16px;
+        padding: 20px 16px;
         margin-bottom: 20px;
         backdrop-filter: blur(11px);
         -webkit-backdrop-filter: blur(11px);
@@ -514,34 +523,43 @@
         -webkit-backdrop-filter: blur(11px);
       }
       .qfilter { width: 100%; }
+      /* Same derivation as the desktop rule, with this breakpoint's numbers:
+         0.7rem of bar padding + 1px border + max(22px mark, auth button at
+         0.95rem line box + 0.5rem padding + 2px border). The 0.95rem is again
+         rounded up from the rendered line box, not exact — same reason.
+
+         Measured in Chrome under CDP device emulation at a 360px CSS viewport
+         (Emulation.setDeviceMetricsOverride), which is how this breakpoint gets
+         exercised at all — the real window will not go below 439px:
+           root 16px: bar 34.19px, padding-top 37.4px  → 3.2px of slack
+           root 20px: bar 43px,    padding-top 46px    → 3px of slack
+         Both roots measured signed-out, signed-in, and with .auth-bar hidden;
+         .container's top never fell above the bar's bottom in any of the six,
+         so no content sits under the bar. With the auth bar hidden at root 20px
+         the mark is the tallest child, the bar shrinks to 37px, and the slack
+         widens to 9px — over-reserved, which is the intended direction.
+         The slack is the rounding-up in the button term: it reserves
+         1.45rem+2px (25.2px / 31px) where the button actually renders 22px /
+         28px. */
+      body { padding-top: calc(0.7rem + 1px + max(22px, 1.45rem + 2px)); }
       .brand-bar {
-        top: 0.5rem;
-        left: 0.5rem;
         padding: 0.35rem 0.5rem;
         backdrop-filter: blur(11px);
         -webkit-backdrop-filter: blur(11px);
       }
       .brand-word { font-size: 0.82rem; }
-      /* The two bars share the top row on a phone, so the auth bar shrinks in
-         step with the brand bar and the email is allowed less width — the row
-         has to fit beside the mark without pushing the page sideways. */
       .auth-bar {
-        top: 0.5rem;
-        right: 0.5rem;
         gap: 0.35rem;
-        padding: 0.3rem 0.5rem;
-        max-width: calc(100% - 140px);
-        backdrop-filter: blur(11px);
-        -webkit-backdrop-filter: blur(11px);
       }
       .auth-email { font-size: 0.7rem; max-width: 30vw; }
       .auth-btn { font-size: 0.7rem; padding: 0.25rem 0.6rem; }
-      .container { padding: 56px 20px 20px; }
+      .container { padding: 28px 20px 20px; }
     }
   </style>
 </head>
 <body>
-  <a class="brand-bar" href="https://pubvera.com" aria-label="Pubvera — back to all tools">
+  <header class="brand-bar">
+    <a class="brand-link" href="https://pubvera.com" aria-label="Pubvera — back to all tools">
     <svg class="brand-mark" viewBox="0 0 64 64" width="22" height="22" aria-hidden="true" focusable="false">
       <g fill="currentColor">
         <rect x="6.0" y="11.0" width="42.0" height="8.1" rx="3.7"/>
@@ -554,16 +572,17 @@
       </g>
     </svg>
     <span class="brand-word">Pubvera</span>
-  </a>
+    </a>
 
-  <!-- AUTH BAR — stays hidden until /config.json returns a Supabase config.
-       Without one the page never loads Supabase and behaves exactly as it did
-       before sign-in existed. Wired up by the module script at the end. -->
-  <div class="auth-bar" id="authBar" hidden>
-    <span class="auth-email" id="authEmail" hidden></span>
-    <button type="button" class="auth-btn auth-btn-primary" id="authSignInBtn" hidden>Sign in with Google</button>
-    <button type="button" class="auth-btn" id="authSignOutBtn" hidden>Sign out</button>
-  </div>
+    <!-- AUTH CONTROLS — stay hidden until /config.json returns a Supabase config.
+         Without one the page never loads Supabase and behaves exactly as it did
+         before sign-in existed. Wired up by the module script at the end. -->
+    <div class="auth-bar" id="authBar" hidden>
+      <span class="auth-email" id="authEmail" hidden></span>
+      <button type="button" class="auth-btn auth-btn-primary" id="authSignInBtn" hidden>Sign in with Google</button>
+      <button type="button" class="auth-btn" id="authSignOutBtn" hidden>Sign out</button>
+    </div>
+  </header>
 
   <div class="container">
     <div class="hero">
