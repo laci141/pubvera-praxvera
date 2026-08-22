@@ -43,11 +43,6 @@ func main() {
 	}
 }
 
-// browserConfig is the bootstrap payload /config.json hands to the page so it
-// can build its Supabase client. SupabaseAnonKey is the PUBLISHABLE
-// (browser-side) key, never the secret one: it is designed to be visible in a
-// browser and Row Level Security is what protects the data. It is still never
-// logged.
 type browserConfig struct {
 	SupabaseURL     string `json:"supabase_url"`
 	SupabaseAnonKey string `json:"supabase_anon_key"`
@@ -56,23 +51,12 @@ type browserConfig struct {
 func handleRoot(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/config.json":
-		// Deliberately NOT under /api/: Caddy protects /api/* with forward_auth,
-		// and the page needs this config BEFORE it can sign anyone in. Serving it
-		// from a protected path would make the requirement circular and force a
-		// special-case exception into the Caddy matcher.
-		//
-		// A missing variable is not an error. An empty pair with status 200 is a
-		// valid answer that puts the page into unauthenticated mode, which is what
-		// keeps local development and the current deployment working until the
-		// environment is set.
 		supaURL := strings.TrimSpace(os.Getenv("SUPABASE_URL"))
 		supaKey := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
 		if supaURL == "" || supaKey == "" {
 			supaURL, supaKey = "", ""
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		// Never cache: a stale key surviving a key rotation would be hard to
-		// diagnose from the browser side.
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey})
 	case "/":
@@ -86,8 +70,6 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
 }
-
-// --- OpenAlex API types ---
 
 type openAlexResponse struct {
 	Results []openAlexWork `json:"results"`
@@ -136,9 +118,12 @@ type article struct {
 	Citations   int    `json:"citations"`
 	URL         string `json:"url"`
 	IsOA        bool   `json:"is_oa"`
+	// IsRetracted is true when OpenAlex returns a title beginning with
+	// "RETRACTED:" — the canonical prefix used by the publisher. It lets
+	// consumers filter or flag retracted papers without parsing the title.
+	IsRetracted bool `json:"is_retracted"`
 }
 
-// decodeAbstract reconstructs text from OpenAlex inverted index
 func decodeAbstract(inv map[string][]int) string {
 	if len(inv) == 0 {
 		return ""
@@ -153,12 +138,6 @@ func decodeAbstract(inv map[string][]int) string {
 			all = append(all, wp{word, p})
 		}
 	}
-	// Ties break on the word so the output cannot depend on map iteration
-	// order. sort.Slice is unstable and `all` is built by ranging over a map,
-	// which Go randomises: two words at the same position rendered in either
-	// order, measured at roughly 13% of a thousand runs in one process.
-	// sort.SliceStable would not help — stability against a randomised input
-	// is not determinism.
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].pos != all[j].pos {
 			return all[i].pos < all[j].pos
@@ -188,7 +167,6 @@ func authorsStr(w openAlexWork) string {
 	return strings.Join(names, ", ")
 }
 
-// authorsFullStr returns every author, " and "-separated (BibTeX convention).
 func authorsFullStr(w openAlexWork) string {
 	var names []string
 	for _, a := range w.Authorships {
@@ -199,14 +177,13 @@ func authorsFullStr(w openAlexWork) string {
 	return strings.Join(names, " and ")
 }
 
-// POST /api/search
 type searchRequest struct {
 	Query    string `json:"query"`
 	FromYear int    `json:"from_year,omitempty"`
 	ToYear   int    `json:"to_year,omitempty"`
 	PerPage  int    `json:"per_page,omitempty"`
 	Page     int    `json:"page,omitempty"`
-	Sort     string `json:"sort,omitempty"` // "cited" or "date"
+	Sort     string `json:"sort,omitempty"`
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -226,14 +203,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		req.Page = 1
 	}
 
-	// Build OpenAlex filter: NEJM ISSN + optional year range + optional search
 	filters := []string{"primary_location.source.issn:" + nejmISSN}
 	if req.FromYear > 0 && req.ToYear > 0 {
 		filters = append(filters, fmt.Sprintf("publication_year:%d-%d", req.FromYear, req.ToYear))
 	} else if req.FromYear > 0 {
 		filters = append(filters, fmt.Sprintf("publication_year:%d", req.FromYear))
 	}
-	// Relevance fix: search ONLY in title + abstract (not full text)
 	if req.Query != "" {
 		filters = append(filters, "title_and_abstract.search:"+req.Query)
 	}
@@ -244,19 +219,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	if req.Page > 1 {
 		params.Set("page", strconv.Itoa(req.Page))
 	}
-	// sort
 	if req.Sort == "date" {
 		params.Set("sort", "publication_date:desc")
 	} else {
 		params.Set("sort", "cited_by_count:desc")
 	}
-	// OpenAlex requires an API key since 2026-02-13 (polite pool retired).
-	// Key comes from the environment — never hardcode it (public repo).
 	if apiKey := os.Getenv("OPENALEX_API_KEY"); apiKey != "" {
 		params.Set("api_key", apiKey)
 	}
 
-	// Overridable for tests (point at a mock to exercise the error branch)
 	base := os.Getenv("OPENALEX_BASE")
 	if base == "" {
 		base = "https://api.openalex.org"
@@ -278,9 +249,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// OpenAlex error bodies ({"error":...}) unmarshal cleanly into an empty
-	// response, which the UI would show as "No results found." — surface the
-	// real failure instead.
 	if resp.StatusCode != http.StatusOK {
 		snippet := string(body)
 		if len(snippet) > 300 {
@@ -302,7 +270,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to clean output
 	articles := make([]article, 0, len(oaResp.Results))
 	for _, wk := range oaResp.Results {
 		doi := strings.TrimPrefix(wk.DOI, "https://doi.org/")
@@ -314,7 +281,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			Title:       wk.Title,
 			Authors:     authorsStr(wk),
 			AuthorsFull: authorsFullStr(wk),
-			Journal:     wk.PrimaryLocation.Source.DisplayName, // journal name from OpenAlex source
+			Journal:     wk.PrimaryLocation.Source.DisplayName,
 			ArticleType: wk.Type,
 			Year:        wk.PublicationYear,
 			Date:        wk.PublicationDate,
@@ -323,6 +290,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			Citations:   wk.CitedByCount,
 			URL:         u,
 			IsOA:        wk.OpenAccess.IsOA,
+			IsRetracted: strings.HasPrefix(wk.Title, "RETRACTED:"),
 		})
 	}
 
