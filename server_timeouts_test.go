@@ -9,7 +9,7 @@ import (
 // http.Server honours them — the standard library does that — but the one
 // relationship between them that can be got wrong.
 //
-// WriteTimeout covers the whole response. A CLI run is allowed openAlexTimeout to
+// WriteTimeout covers the whole response. The OpenAlex request is allowed
 // produce it, so a WriteTimeout at or below openAlexTimeout does not stop attacks:
 // it cuts off legitimate slow searches, and it does so intermittently, only on
 // the runs that take longest. That failure is much harder to diagnose than the
@@ -17,10 +17,10 @@ import (
 
 func TestWriteTimeoutOutlastsTheOpenAlexBudget(t *testing.T) {
 	if srvWriteTimeout <= openAlexTimeout {
-		t.Fatalf("srvWriteTimeout = %s, openAlexTimeout = %s: the server would abort its own\nresponse while the CLI is still allowed to be producing it", srvWriteTimeout, openAlexTimeout)
+		t.Fatalf("srvWriteTimeout = %s, openAlexTimeout = %s: the server would abort its own\nresponse while the OpenAlex request is still allowed to be producing it", srvWriteTimeout, openAlexTimeout)
 	}
 
-	// Room to write the response after the CLI has used its full budget. A
+	// Room to write the response after OpenAlex has used its full budget. A
 	// margin this size is arbitrary in its exact value but not in its
 	// presence: without one, the two deadlines race.
 	const minMargin = 15 * time.Second
