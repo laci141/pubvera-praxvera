@@ -17,6 +17,32 @@ import (
 // NEJM ISSNs in OpenAlex
 const nejmISSN = "0028-4793"
 
+// openAlexTimeout bounds the one outbound call this app makes. It was written
+// inline at the call site; naming it here is what lets srvWriteTimeout below be
+// derived from it rather than guessed.
+const openAlexTimeout = 30 * time.Second
+
+// Server-side timeouts. ReadHeaderTimeout was the only one set, which left the
+// request BODY with no deadline at all: a size limit is not a time limit, and a
+// client that sends its body one byte per minute holds a handler goroutine for
+// as long as it likes. Caddy fronts this app in production and sets no request
+// timeout of its own, so this is the only place the limit exists.
+//
+// WriteTimeout is the one that must not be guessed. Unlike the CLI-backed apps
+// in this suite, the longest legitimate operation here is the single OpenAlex
+// request, so the budget is openAlexTimeout rather than a CLI run: copying the
+// 150s used elsewhere would be a number with nothing behind it.
+const (
+	srvReadHeaderTimeout = 10 * time.Second
+	// The body is a small JSON object. Thirty seconds is far more than a real
+	// client needs and far less than a slow-loris attacker wants.
+	srvReadTimeout = 30 * time.Second
+	// The full OpenAlex budget plus room to decode and write the response.
+	srvWriteTimeout = openAlexTimeout + 30*time.Second
+	// Keep-alive connections that go quiet are released rather than held.
+	srvIdleTimeout = 120 * time.Second
+)
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -34,7 +60,10 @@ func main() {
 	srv := &http.Server{
 		Addr:              "0.0.0.0:" + port,
 		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: srvReadHeaderTimeout,
+		ReadTimeout:       srvReadTimeout,
+		WriteTimeout:      srvWriteTimeout,
+		IdleTimeout:       srvIdleTimeout,
 	}
 
 	log.Printf("nejm-openalex-web on 0.0.0.0:%s", port)
@@ -234,7 +263,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	apiURL := base + "/works?" + params.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: openAlexTimeout}
 	resp, err := client.Get(apiURL)
 	if err != nil {
 		log.Print(err)
