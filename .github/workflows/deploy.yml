@@ -27,6 +27,22 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      # Vet and Gofmt run before Test, as in pubvera-recallis and
+      # pubvera-grantvera. Test alone let vet findings and unformatted code
+      # merge green.
+      - name: Vet
+        run: go vet ./...
+
+      - name: Gofmt
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "gofmt found unformatted files:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+          echo "gofmt: zero files"
+
       - name: Test
         run: go test -race ./...
 
