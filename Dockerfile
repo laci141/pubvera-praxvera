@@ -11,5 +11,5 @@ COPY --from=web-builder /out/server ./server
 COPY index.html ./index.html
 RUN chmod +x ./server
 EXPOSE 8096
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -q -O- http://localhost:8096/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 CMD wget -q -O- http://localhost:8096/healthz || exit 1
 CMD ["./server"]
