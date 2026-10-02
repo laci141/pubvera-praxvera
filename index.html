@@ -797,11 +797,25 @@
     const SORT_LABEL={cite_desc:"citations high→low",cite_asc:"citations low→high",
       year_desc:"year newest→oldest",year_asc:"year oldest→newest",title_asc:"title A→Z"};
 
+    // Server-side filters of the last successful search, from the params that
+    // were actually sent (lastParams) — never from the live form fields.
+    function serverFilters(){
+      const p=lastParams;
+      if(!p)return [];
+      return [p.fromYear===p.toYear ? "year "+p.fromYear : "years "+p.fromYear+"–"+p.toYear,
+        "sort "+(p.sort==="date"?"newest first":"most cited"),
+        p.perPage+" per page",
+        "page "+p.page+" of "+Math.max(1,Math.ceil(p.total/p.perPage))];
+    }
+
     registerView("search",function(){
-      const filters=[];
-      if(currentType!=="all") filters.push("type: "+currentType);
+      const filters=serverFilters();
+      filters.push(currentType==="all" ? "all types" : "type: "+currentType);
       if(currentFilter&&currentFilter.trim()) filters.push('filter: "'+currentFilter.trim()+'"');
-      if(currentSort!=="cite_desc") filters.push("sort: "+(SORT_LABEL[currentSort]||currentSort));
+      // The toolbar sort is synced to the server sort on a fresh search; only a
+      // re-sort that differs from it is a filter of its own.
+      const serverSort=(lastParams&&lastParams.sort==="date")?"year_desc":"cite_desc";
+      if(currentSort!==serverSort) filters.push("re-sorted on page: "+(SORT_LABEL[currentSort]||currentSort));
       return {rows:viewRows(), filters:filters};
     });
 
@@ -813,8 +827,13 @@
       const shown=rows?rows.length:0;
       const parts=["Praxvera export"];
       if(ANALYSIS_LABEL[key]) parts.push(ANALYSIS_LABEL[key]);
-      if(lastQuery) parts.push('query: "'+lastQuery+'"');
-      parts.push(total&&total!==shown ? ("showing "+shown+" of "+total+" rows") : (shown+" rows"));
+      const q=lastParams?lastParams.query:"";
+      parts.push(q ? 'query: "'+q+'"' : "query: none");
+      let count=total&&total!==shown ? ("showing "+shown+" of "+total+" rows") : (shown+" rows");
+      // The page holds one page of rows; the API total is what the search matched.
+      if(lastParams) count+=" ("+Number(lastParams.total).toLocaleString("en-US")+
+        (lastParams.total===1?" article":" articles")+" matched in total)";
+      parts.push(count);
       const sc=exportRows(key).scope;
       if(sc) parts.push(sc);
       parts.push("source: OpenAlex");
@@ -910,6 +929,12 @@
         }
       }
       ws["!cols"]=colInfo.map(ci=>({wch:ci.wch}));
+      // Filter row = the column header (row index 1); row 0 is the provenance
+      // caption and must stay outside the range.
+      ws["!autofilter"]={ref:XLSX.utils.encode_range({
+        s:{r:1,c:0},
+        e:{r:aoa.length-1,c:Math.max(cols.length-1,0)}
+      })};
       ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:Math.max(cols.length-1,0)}}];
       ws["!freeze"]={xSplit:0,ySplit:2};
       const wb=XLSX.utils.book_new();
@@ -985,8 +1010,10 @@
       const er=exportRows(key);
       if(!er.rows.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
       const payload={export:{app:"Praxvera",analysis:ANALYSIS_LABEL[key]||"",
-        query:lastQuery||"",filters:er.scope,rows_exported:er.rows.length,
-        rows_total:(rowsFromLastData(key)||[]).length,source:"OpenAlex",
+        query:lastParams?lastParams.query:"",filters:er.scope,rows_exported:er.rows.length,
+        rows_loaded:(rowsFromLastData(key)||[]).length,
+        rows_total:lastParams?lastParams.total:null,
+        rows_total_unit:lastParams?"articles":null,source:"OpenAlex",
         exported_at:new Date().toISOString()},rows:er.rows};
       triggerDownload(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),filename);
     }
@@ -1033,6 +1060,9 @@
     // ───────────────────────── Search + rendering ─────────────────────────
     let lastArticles = [];
     let lastQuery = '';
+    // Params of the last successful search as sent to /api/search, plus the API
+    // total; the exports read these, never the live form fields.
+    let lastParams = null;
     let lastTotal = 0;
     let lastPerPage = 20;
     let currentPage = 1;
@@ -1325,6 +1355,8 @@
         lastTotal = data.total;
         lastPerPage = perPage;
         currentPage = data.page || page;
+        lastParams = { query: query, fromYear: fromYear, toYear: toYear, sort: sort,
+                       perPage: perPage, page: currentPage, total: data.total };
         if (!keepState) {
           // Fresh search: sync the toolbar sort to the server sort, clear filters.
           currentSort = (sort === 'date') ? 'year_desc' : 'cite_desc';
