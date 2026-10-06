@@ -27,6 +27,10 @@ const openAlexTimeout = 30 * time.Second
 // ReadTimeout limits time, not size.
 const maxRequestBody = 16 << 10
 
+// maxBasicResults is OpenAlex's basic-paging ceiling: page * per-page may not
+// exceed it (measured: per-page=50 answers 200 on page 200 and 400 on page 201).
+const maxBasicResults = 10000
+
 // Server-side timeouts. ReadHeaderTimeout was the only one set, which left the
 // request BODY with no deadline at all: a size limit is not a time limit, and a
 // client that sends its body one byte per minute holds a handler goroutine for
@@ -255,6 +259,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Page < 1 {
 		req.Page = 1
+	}
+	if req.Page > maxBasicResults/req.PerPage {
+		http.Error(w, "page beyond the OpenAlex 10,000-result paging limit — refine the search", http.StatusBadRequest)
+		return
 	}
 
 	filters := []string{"primary_location.source.issn:" + nejmISSN}

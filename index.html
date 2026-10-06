@@ -1070,6 +1070,18 @@
     let currentFilter = '';
     let currentType = 'all';
 
+    // OpenAlex basic paging stops at 10,000 results (page * per-page); the
+    // server answers 400 beyond it, so the pager must never offer such a page.
+    function maxPages(perPage) { return Math.max(1, Math.floor(10000 / perPage)); }
+    function totalPagesFor(total, perPage) {
+      return Math.min(Math.max(1, Math.ceil(total / perPage)), maxPages(perPage));
+    }
+    function pagerNote(total) {
+      return total > 10000
+        ? '<div class="pager-info" style="white-space:normal;text-align:center;margin-top:10px">OpenAlex allows paging through the first 10,000 results. Refine the search to see more.</div>'
+        : '';
+    }
+
     // Renders the card list plus its toolbar. Used both by the initial search
     // and by client-side re-sorting (no extra API call).
     function renderResults(articles, total) {
@@ -1084,7 +1096,7 @@
         }
         lastArticles = [];
         resultDiv.innerHTML = `<div class="results-header">No ${esc(currentType)} articles on this page.</div>` +
-          metaRow(`0 / ${pageRows.length} shown · page ${currentPage} of ${Math.max(1, Math.ceil(lastTotal / lastPerPage))}`,
+          metaRow(`0 / ${pageRows.length} shown · page ${currentPage} of ${totalPagesFor(lastTotal, lastPerPage)}`,
                   'search', 'praxvera-search.json');
         let typeReset = document.getElementById('typeFilter');
         if (typeReset) typeReset.value = currentType;
@@ -1098,7 +1110,7 @@
       lastArticles = articles;
 
       let maxCites = Math.max(...articles.map(a => a.citations || 0));
-      let totalPages = Math.max(1, Math.ceil(lastTotal / lastPerPage));
+      let totalPages = totalPagesFor(lastTotal, lastPerPage);
       let allOnPage = pageRows.length;
       let metaText = currentType === 'all'
         ? `${articles.length} / ${lastTotal} total · page ${currentPage} of ${totalPages}`
@@ -1152,7 +1164,7 @@
         <button class="dl" onclick="pageNav(-1)" ${currentPage <= 1 ? 'disabled' : ''}>← Previous</button>
         <span class="pager-info">Page ${currentPage} of ${totalPages}</span>
         <button class="dl" onclick="pageNav(1)" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
-      </div>`;
+      </div>` + pagerNote(lastTotal);
       resultDiv.innerHTML = html;
 
       // Restore toolbar state across re-renders.
@@ -1167,7 +1179,7 @@
 
     // Fetches an adjacent page, keeping sort/type state, then scrolls back up.
     async function pageNav(delta) {
-      const totalPages = Math.max(1, Math.ceil(lastTotal / lastPerPage));
+      const totalPages = totalPagesFor(lastTotal, lastPerPage);
       const target = currentPage + delta;
       if (target < 1 || target > totalPages) return;
       await doSearch(target, true);
