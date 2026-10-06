@@ -31,6 +31,10 @@ const maxRequestBody = 16 << 10
 // exceed it (measured: per-page=50 answers 200 on page 200 and 400 on page 201).
 const maxBasicResults = 10000
 
+// minYear is the earliest year the search accepts. The latest is the current
+// year plus one (an issue can be dated ahead of the calendar year).
+const minYear = 1800
+
 // Server-side timeouts. ReadHeaderTimeout was the only one set, which left the
 // request BODY with no deadline at all: a size limit is not a time limit, and a
 // client that sends its body one byte per minute holds a handler goroutine for
@@ -271,6 +275,19 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Page > maxBasicResults/req.PerPage {
 		http.Error(w, "page beyond the OpenAlex 10,000-result paging limit — refine the search", http.StatusBadRequest)
+		return
+	}
+
+	// A year of 0 means "not set" and is not checked.
+	maxYear := time.Now().Year() + 1
+	for _, y := range []int{req.FromYear, req.ToYear} {
+		if y != 0 && (y < minYear || y > maxYear) {
+			http.Error(w, fmt.Sprintf("year out of range (%d to %d)", minYear, maxYear), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.FromYear != 0 && req.ToYear != 0 && req.FromYear > req.ToYear {
+		http.Error(w, "from_year must not be greater than to_year", http.StatusBadRequest)
 		return
 	}
 
