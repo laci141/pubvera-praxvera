@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // workWithAuthors builds an openAlexWork whose Authorships hold the given
@@ -518,4 +520,54 @@ func TestSearchOpenAlexQuery(t *testing.T) {
 			t.Errorf("fixture: upstream query %q should carry the api_key", upstreamQuery)
 		}
 	})
+}
+
+// TestSearchYearRangeValidation pins the year checks in handleSearch. A year of
+// 0 means "not set" and keeps the old behaviour; any other year must lie in
+// [1800, current year + 1] and from_year may not exceed to_year. Every refusal
+// must happen before an OpenAlex request is made, so the cases count upstream
+// calls.
+func TestSearchYearRangeValidation(t *testing.T) {
+	now := time.Now().Year()
+	tests := []struct {
+		name         string
+		from, to     int
+		wantStatus   int
+		wantUpstream int32
+		wantInBody   string
+	}{
+		{name: "a: from_year after to_year is refused", from: 2020, to: 2010, wantStatus: http.StatusBadRequest, wantUpstream: 0, wantInBody: "from_year"},
+		{name: "b: from_year 1700 is below the minimum", from: 1700, to: 2020, wantStatus: http.StatusBadRequest, wantUpstream: 0},
+		{name: "c: to_year two years ahead is above the maximum", from: 2000, to: now + 2, wantStatus: http.StatusBadRequest, wantUpstream: 0},
+		{name: "d: from_year equal to to_year is allowed", from: 2010, to: 2010, wantStatus: http.StatusOK, wantUpstream: 1},
+		{name: "e: 1990 to the current year is allowed", from: 1990, to: now, wantStatus: http.StatusOK, wantUpstream: 1},
+		{name: "f: both years unset keeps today's behaviour", from: 0, to: 0, wantStatus: http.StatusOK, wantUpstream: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int32
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+
+			body := fmt.Sprintf(`{"query":"x","from_year":%d,"to_year":%d}`, tt.from, tt.to)
+			req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			handleSearch(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if got := atomic.LoadInt32(&calls); got != tt.wantUpstream {
+				t.Errorf("upstream calls = %d, want %d", got, tt.wantUpstream)
+			}
+			if tt.wantInBody != "" && !strings.Contains(rec.Body.String(), tt.wantInBody) {
+				t.Errorf("body = %q, want it to mention %q", rec.Body.String(), tt.wantInBody)
+			}
+		})
+	}
 }
