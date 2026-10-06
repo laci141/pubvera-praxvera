@@ -48,13 +48,26 @@ const (
 	srvIdleTimeout = 120 * time.Second
 )
 
+// apiKeyPlaceholder is the value .env.example ships with. It is not a real key.
+const apiKeyPlaceholder = "your_key_here"
+
+// openAlexAPIKey returns the configured OpenAlex key, or "" when the variable is
+// empty, whitespace-only or still the .env.example placeholder.
+func openAlexAPIKey() string {
+	key := strings.TrimSpace(os.Getenv("OPENALEX_API_KEY"))
+	if key == apiKeyPlaceholder {
+		return ""
+	}
+	return key
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8096"
 	}
-	if os.Getenv("OPENALEX_API_KEY") == "" {
-		log.Print("WARNING: OPENALEX_API_KEY not set — OpenAlex requires an API key since 2026-02-13")
+	if openAlexAPIKey() == "" {
+		log.Print("WARNING: OPENALEX_API_KEY not set — using the lower anonymous OpenAlex budget")
 	}
 
 	mux := http.NewServeMux()
@@ -265,7 +278,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	} else {
 		params.Set("sort", "cited_by_count:desc")
 	}
-	if apiKey := os.Getenv("OPENALEX_API_KEY"); apiKey != "" {
+	if apiKey := openAlexAPIKey(); apiKey != "" {
 		params.Set("api_key", apiKey)
 	}
 

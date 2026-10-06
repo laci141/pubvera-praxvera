@@ -345,3 +345,51 @@ func TestSearchRequestBodyLimit(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchAPIKeyHandling pins which OPENALEX_API_KEY values reach OpenAlex.
+// The .env.example placeholder, an empty value and whitespace-only values are
+// "unset": no api_key parameter is sent. A real key is sent trimmed.
+func TestSearchAPIKeyHandling(t *testing.T) {
+	tests := []struct {
+		name        string
+		env         string
+		wantPresent bool
+		wantValue   string
+	}{
+		{name: "a placeholder is treated as unset", env: "your_key_here", wantPresent: false},
+		{name: "a placeholder with surrounding spaces is treated as unset", env: "  your_key_here  ", wantPresent: false},
+		{name: "an empty value is unset", env: "", wantPresent: false},
+		{name: "a spaces-only value is unset", env: "   ", wantPresent: false},
+		{name: "a real key is sent as is", env: "real-key-123", wantPresent: true, wantValue: "real-key-123"},
+		{name: "a real key with surrounding spaces is sent trimmed", env: "  real-key-123  ", wantPresent: true, wantValue: "real-key-123"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPresent bool
+			var gotValue string
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPresent = r.URL.Query().Has("api_key")
+				gotValue = r.URL.Query().Get("api_key")
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+			t.Setenv("OPENALEX_API_KEY", tt.env)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(`{"query":"x"}`))
+			rec := httptest.NewRecorder()
+			handleSearch(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+			}
+			if gotPresent != tt.wantPresent {
+				t.Errorf("api_key present = %v (value %q), want present = %v", gotPresent, gotValue, tt.wantPresent)
+			}
+			if gotValue != tt.wantValue {
+				t.Errorf("api_key = %q, want %q", gotValue, tt.wantValue)
+			}
+		})
+	}
+}
