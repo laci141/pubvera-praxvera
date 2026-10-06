@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,6 +22,10 @@ const nejmISSN = "0028-4793"
 // inline at the call site; naming it here is what lets srvWriteTimeout below be
 // derived from it rather than guessed.
 const openAlexTimeout = 30 * time.Second
+
+// maxRequestBody caps the /api/search body. A legitimate request is under 1 KiB;
+// ReadTimeout limits time, not size.
+const maxRequestBody = 16 << 10
 
 // Server-side timeouts. ReadHeaderTimeout was the only one set, which left the
 // request BODY with no deadline at all: a size limit is not a time limit, and a
@@ -221,8 +226,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only POST", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	var req searchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}

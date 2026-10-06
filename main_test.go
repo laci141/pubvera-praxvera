@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -290,6 +291,56 @@ func TestSearchIsRetractedComesFromOpenAlexField(t *testing.T) {
 			}
 			if got := out.Articles[0].IsRetracted; got != tt.want {
 				t.Errorf("IsRetracted = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSearchRequestBodyLimit pins the byte cap on the /api/search body. A
+// legitimate request is under 1 KiB, and ReadTimeout limits time, not size, so
+// without the cap a client can make the handler buffer an arbitrarily large
+// "query". Case a also counts upstream calls: an oversized body must be refused
+// before any OpenAlex request is made. Case b is the regression guard.
+func TestSearchRequestBodyLimit(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		wantStatus   int
+		wantUpstream int32
+	}{
+		{
+			name:         "body larger than 16 KiB is rejected with 413 and never reaches upstream",
+			body:         `{"query":"` + strings.Repeat("a", 16<<10+1) + `"}`,
+			wantStatus:   http.StatusRequestEntityTooLarge,
+			wantUpstream: 0,
+		},
+		{
+			name:         "normal small body still succeeds",
+			body:         `{"query":"x"}`,
+			wantStatus:   http.StatusOK,
+			wantUpstream: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int32
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			handleSearch(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if got := atomic.LoadInt32(&calls); got != tt.wantUpstream {
+				t.Errorf("upstream calls = %d, want %d", got, tt.wantUpstream)
 			}
 		})
 	}
