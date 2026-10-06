@@ -115,6 +115,7 @@ type openAlexWork struct {
 	PublicationYear       int              `json:"publication_year"`
 	PublicationDate       string           `json:"publication_date"`
 	CitedByCount          int              `json:"cited_by_count"`
+	IsRetracted           bool             `json:"is_retracted"`
 	AbstractInvertedIndex map[string][]int `json:"abstract_inverted_index"`
 	Authorships           []struct {
 		Author struct {
@@ -147,9 +148,9 @@ type article struct {
 	Citations   int    `json:"citations"`
 	URL         string `json:"url"`
 	IsOA        bool   `json:"is_oa"`
-	// IsRetracted is true when OpenAlex returns a title beginning with
-	// "RETRACTED:" — the canonical prefix used by the publisher. It lets
-	// consumers filter or flag retracted papers without parsing the title.
+	// IsRetracted is OpenAlex's own is_retracted field (Retraction Watch
+	// based), not a guess from the title. It lets consumers filter or flag
+	// retracted papers without parsing the title.
 	IsRetracted bool `json:"is_retracted"`
 }
 
@@ -319,7 +320,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			Citations:   wk.CitedByCount,
 			URL:         u,
 			IsOA:        wk.OpenAccess.IsOA,
-			IsRetracted: strings.HasPrefix(wk.Title, "RETRACTED:"),
+			IsRetracted: wk.IsRetracted,
 		})
 	}
 
