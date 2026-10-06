@@ -393,3 +393,70 @@ func TestSearchAPIKeyHandling(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchBasicPagingLimit pins the OpenAlex basic-paging ceiling: page *
+// per_page may not exceed 10,000 (measured: per-page=50 gives HTTP 200 on page
+// 200 and HTTP 400 on page 201). Beyond it the handler must answer 400 itself
+// rather than forward the request and turn the upstream 400 into a 502.
+func TestSearchBasicPagingLimit(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		wantStatus   int
+		wantUpstream int32
+		wantInBody   string
+	}{
+		{
+			name:         "per_page 50, page 200 is the last allowed page",
+			body:         `{"query":"x","per_page":50,"page":200}`,
+			wantStatus:   http.StatusOK,
+			wantUpstream: 1,
+		},
+		{
+			name:         "per_page 50, page 201 is refused with 400 and never reaches upstream",
+			body:         `{"query":"x","per_page":50,"page":201}`,
+			wantStatus:   http.StatusBadRequest,
+			wantUpstream: 0,
+			wantInBody:   "10,000",
+		},
+		{
+			name:         "per_page 20, page 500 is the last allowed page",
+			body:         `{"query":"x","per_page":20,"page":500}`,
+			wantStatus:   http.StatusOK,
+			wantUpstream: 1,
+		},
+		{
+			name:         "per_page 20, page 501 is refused with 400 and never reaches upstream",
+			body:         `{"query":"x","per_page":20,"page":501}`,
+			wantStatus:   http.StatusBadRequest,
+			wantUpstream: 0,
+			wantInBody:   "10,000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int32
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			handleSearch(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if got := atomic.LoadInt32(&calls); got != tt.wantUpstream {
+				t.Errorf("upstream calls = %d, want %d", got, tt.wantUpstream)
+			}
+			if tt.wantInBody != "" && !strings.Contains(rec.Body.String(), tt.wantInBody) {
+				t.Errorf("body = %q, want it to mention %q", rec.Body.String(), tt.wantInBody)
+			}
+		})
+	}
+}
