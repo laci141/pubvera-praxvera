@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -222,6 +225,71 @@ func TestAuthorsFullStr(t *testing.T) {
 			got := authorsFullStr(workWithAuthors(t, tt.names...))
 			if got != tt.want {
 				t.Errorf("authorsFullStr() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSearchIsRetractedComesFromOpenAlexField drives handleSearch against a fake
+// OpenAlex server, so it pins the real mapping from the upstream JSON to the
+// article the browser receives. The title prefix is not evidence either way:
+// case b has the "RETRACTED:" prefix but OpenAlex says false, and case a is
+// retracted per OpenAlex with a title that carries no prefix.
+func TestSearchIsRetractedComesFromOpenAlexField(t *testing.T) {
+	tests := []struct {
+		name string
+		work string
+		want bool
+	}{
+		{
+			name: "is_retracted true with a normal title is retracted",
+			work: `{"title":"A randomised trial of X","is_retracted":true}`,
+			want: true,
+		},
+		{
+			name: "is_retracted false with a RETRACTED: title prefix is not retracted",
+			work: `{"title":"RETRACTED: A randomised trial of X","is_retracted":false}`,
+			want: false,
+		},
+		{
+			name: "missing is_retracted field is not retracted",
+			work: `{"title":"A randomised trial of X"}`,
+			want: false,
+		},
+		{
+			name: "normal article with is_retracted false is not retracted",
+			work: `{"title":"A randomised trial of X","is_retracted":false}`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[` + tt.work + `],"meta":{"count":1}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(`{"query":"x"}`))
+			rec := httptest.NewRecorder()
+			handleSearch(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+			}
+
+			var out struct {
+				Articles []article `json:"articles"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if len(out.Articles) != 1 {
+				t.Fatalf("got %d articles, want 1", len(out.Articles))
+			}
+			if got := out.Articles[0].IsRetracted; got != tt.want {
+				t.Errorf("IsRetracted = %v, want %v", got, tt.want)
 			}
 		})
 	}
