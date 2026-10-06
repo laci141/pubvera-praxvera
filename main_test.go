@@ -460,3 +460,62 @@ func TestSearchBasicPagingLimit(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchOpenAlexQuery pins the openalex_query field: the filter and sort
+// that were sent upstream, encoded, so the browser can link to the same result
+// set on openalex.org. It must never carry the API key, the page or the page
+// size, because the browser puts it into links and exported files.
+func TestSearchOpenAlexQuery(t *testing.T) {
+	var upstreamQuery string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"results":[],"meta":{"count":13343}}`))
+	}))
+	defer fake.Close()
+	t.Setenv("OPENALEX_BASE", fake.URL)
+	t.Setenv("OPENALEX_API_KEY", "real-key-123")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/search",
+		strings.NewReader(`{"query":"patients","from_year":1990,"to_year":2026,"per_page":50,"page":3,"sort":"cited"}`))
+	rec := httptest.NewRecorder()
+	handleSearch(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		OpenAlexQuery string `json:"openalex_query"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	t.Run("a: carries the encoded filter (ISSN, years, query term) and the sort", func(t *testing.T) {
+		for _, want := range []string{
+			"filter=primary_location.source.issn%3A0028-4793%2Cpublication_year%3A1990-2026%2Ctitle_and_abstract.search%3Apatients",
+			"sort=cited_by_count%3Adesc",
+		} {
+			if !strings.Contains(out.OpenAlexQuery, want) {
+				t.Errorf("openalex_query = %q, want it to contain %q", out.OpenAlexQuery, want)
+			}
+		}
+	})
+
+	t.Run("b: carries no api_key, key value, page or per-page", func(t *testing.T) {
+		if out.OpenAlexQuery == "" {
+			t.Fatal("openalex_query is empty, so the absence checks below would pass vacuously")
+		}
+		for _, bad := range []string{"api_key", "real-key-123", "page=", "per-page="} {
+			if strings.Contains(out.OpenAlexQuery, bad) {
+				t.Errorf("openalex_query = %q, must not contain %q", out.OpenAlexQuery, bad)
+			}
+		}
+		if strings.Contains(rec.Body.String(), "real-key-123") {
+			t.Errorf("response body leaks the API key: %s", rec.Body.String())
+		}
+		// Control: the key really was sent upstream, so the checks above bite.
+		if !strings.Contains(upstreamQuery, "api_key=real-key-123") {
+			t.Errorf("fixture: upstream query %q should carry the api_key", upstreamQuery)
+		}
+	})
+}

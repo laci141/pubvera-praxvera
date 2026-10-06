@@ -797,15 +797,35 @@
     const SORT_LABEL={cite_desc:"citations high→low",cite_asc:"citations low→high",
       year_desc:"year newest→oldest",year_asc:"year oldest→newest",title_asc:"title A→Z"};
 
+    // OpenAlex basic paging reaches only the first 10,000 results. Pages by
+    // total (what the API count would give) can exceed the pages reachable.
+    const OPENALEX_PAGING_LIMIT=10000;
+    function pagingInfo(p){
+      return {limit:OPENALEX_PAGING_LIMIT,
+        reachable:totalPagesFor(p.total,p.perPage),
+        byTotal:Math.max(1,Math.ceil(p.total/p.perPage)),
+        over:p.total>OPENALEX_PAGING_LIMIT};
+    }
+    // Links to the same result set on openalex.org / api.openalex.org, built from
+    // the server's openalex_query (filter + sort only — never the api_key).
+    function openAlexUrls(p){
+      const q=p&&p.openalexQuery;
+      return q?{web:"https://openalex.org/works?"+q,
+        api:"https://api.openalex.org/works?"+q+"&per-page=100&cursor=*"}:null;
+    }
+
     // Server-side filters of the last successful search, from the params that
     // were actually sent (lastParams) — never from the live form fields.
     function serverFilters(){
       const p=lastParams;
       if(!p)return [];
+      const pg=pagingInfo(p);
       return [p.fromYear===p.toYear ? "year "+p.fromYear : "years "+p.fromYear+"–"+p.toYear,
         "sort "+(p.sort==="date"?"newest first":"most cited"),
         p.perPage+" per page",
-        "page "+p.page+" of "+Math.max(1,Math.ceil(p.total/p.perPage))];
+        "page "+p.page+" of "+(pg.over
+          ? pg.reachable+" (OpenAlex paging limit; "+pg.byTotal+" pages by total)"
+          : pg.byTotal)];
     }
 
     registerView("search",function(){
@@ -837,6 +857,11 @@
       const sc=exportRows(key).scope;
       if(sc) parts.push(sc);
       parts.push("source: OpenAlex");
+      const urls=openAlexUrls(lastParams);
+      if(urls) parts.push("Full result set on OpenAlex: "+urls.web+
+        " (website export up to 100,000 works, CSV/RIS) · API: "+urls.api+" (cursor paging)");
+      if(lastParams&&pagingInfo(lastParams).over)
+        parts.push("Tip: narrow the year range to keep each search under 10,000 results.");
       parts.push(new Date().toISOString().slice(0,10));
       return parts.join(" · ");
     }
@@ -1009,11 +1034,16 @@
       if(!lastData[key]){alert("Run an analysis first.");return;}
       const er=exportRows(key);
       if(!er.rows.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
+      const urls=openAlexUrls(lastParams);
+      const pg=lastParams?pagingInfo(lastParams):null;
       const payload={export:{app:"Praxvera",analysis:ANALYSIS_LABEL[key]||"",
         query:lastParams?lastParams.query:"",filters:er.scope,rows_exported:er.rows.length,
         rows_loaded:(rowsFromLastData(key)||[]).length,
         rows_total:lastParams?lastParams.total:null,
         rows_total_unit:lastParams?"articles":null,source:"OpenAlex",
+        openalex_web_url:urls?urls.web:null,openalex_api_url:urls?urls.api:null,
+        paging_limit_results:OPENALEX_PAGING_LIMIT,
+        pages_reachable:pg?pg.reachable:null,pages_by_total:pg?pg.byTotal:null,
         exported_at:new Date().toISOString()},rows:er.rows};
       triggerDownload(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),filename);
     }
@@ -1077,9 +1107,12 @@
       return Math.min(Math.max(1, Math.ceil(total / perPage)), maxPages(perPage));
     }
     function pagerNote(total) {
-      return total > 10000
-        ? '<div class="pager-info" style="white-space:normal;text-align:center;margin-top:10px">OpenAlex allows paging through the first 10,000 results. Refine the search to see more.</div>'
+      if (total <= 10000) return '';
+      let urls = openAlexUrls(lastParams);
+      let link = urls
+        ? ` <a href="${escAttr(urls.web)}" target="_blank" rel="noopener noreferrer">Open the full result set on OpenAlex</a>`
         : '';
+      return '<div class="pager-info" style="white-space:normal;text-align:center;margin-top:10px">OpenAlex allows paging through the first 10,000 results. Refine the search to see more.' + link + '</div>';
     }
 
     // Renders the card list plus its toolbar. Used both by the initial search
@@ -1368,7 +1401,8 @@
         lastPerPage = perPage;
         currentPage = data.page || page;
         lastParams = { query: query, fromYear: fromYear, toYear: toYear, sort: sort,
-                       perPage: perPage, page: currentPage, total: data.total };
+                       perPage: perPage, page: currentPage, total: data.total,
+                       openalexQuery: typeof data.openalex_query === 'string' ? data.openalex_query : '' };
         if (!keepState) {
           // Fresh search: sync the toolbar sort to the server sort, clear filters.
           currentSort = (sort === 'date') ? 'year_desc' : 'cite_desc';

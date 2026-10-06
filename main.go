@@ -238,6 +238,15 @@ type searchRequest struct {
 	Sort     string `json:"sort,omitempty"`
 }
 
+type searchResponse struct {
+	Total    int       `json:"total"`
+	Page     int       `json:"page"`
+	Articles []article `json:"articles"`
+	// OpenAlexQuery is the encoded filter and sort of this search (no api_key,
+	// page or per-page), so the browser can link to the same result set.
+	OpenAlexQuery string `json:"openalex_query"`
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST", http.StatusMethodNotAllowed)
@@ -275,17 +284,24 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		filters = append(filters, "title_and_abstract.search:"+req.Query)
 	}
 
+	sortBy := "cited_by_count:desc"
+	if req.Sort == "date" {
+		sortBy = "publication_date:desc"
+	}
+	// The same filter and sort that are sent upstream, and nothing else: the
+	// browser turns this into openalex.org links, so it must never carry the
+	// api_key, the page or the page size.
+	shared := url.Values{}
+	shared.Set("filter", strings.Join(filters, ","))
+	shared.Set("sort", sortBy)
+
 	params := url.Values{}
 	params.Set("filter", strings.Join(filters, ","))
 	params.Set("per-page", fmt.Sprintf("%d", req.PerPage))
 	if req.Page > 1 {
 		params.Set("page", strconv.Itoa(req.Page))
 	}
-	if req.Sort == "date" {
-		params.Set("sort", "publication_date:desc")
-	} else {
-		params.Set("sort", "cited_by_count:desc")
-	}
+	params.Set("sort", sortBy)
 	if apiKey := openAlexAPIKey(); apiKey != "" {
 		params.Set("api_key", apiKey)
 	}
@@ -356,10 +372,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	out := map[string]interface{}{
-		"total":    oaResp.Meta.Count,
-		"page":     req.Page,
-		"articles": articles,
+	out := searchResponse{
+		Total:         oaResp.Meta.Count,
+		Page:          req.Page,
+		Articles:      articles,
+		OpenAlexQuery: shared.Encode(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

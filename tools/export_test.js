@@ -30,6 +30,10 @@ function check(label, ok) {
 
 // ── fixture: one page of 50 rows, as /api/search returns them ──
 const TOTAL = 14148;
+// What the server answers in openalex_query: filter and sort only, encoded.
+const OAQ = "filter=primary_location.source.issn%3A0028-4793%2Cpublication_year%3A2014-2026&sort=cited_by_count%3Adesc";
+let fakeTotal = TOTAL;
+let fakeOAQ = OAQ;
 const articles = [];
 for (let i = 0; i < 50; i++) {
   articles.push({
@@ -86,7 +90,8 @@ const sandbox = {
     }
   },
   XLSX,
-  fetch: async () => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify({ total: TOTAL, page: 1, articles })) }),
+  fetch: async () => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(
+    Object.assign({ total: fakeTotal, page: 1, articles }, fakeOAQ === null ? {} : { openalex_query: fakeOAQ }))) }),
   document: {
     getElementById: byId,
     querySelector: () => null,
@@ -102,16 +107,37 @@ const run = code => vm.runInContext(code, sandbox);
 const lastBlob = () => blobs[blobs.length - 1];
 const csvHeader = text => text.replace(/^﻿/, "").split("\r\n")[1];
 
-async function search(q) {
+async function search(q, total = TOTAL, perPage = 50) {
+  fakeTotal = total;
   byId("queryInput").value = q;
   byId("fromYearSelect").value = "2014";
   byId("toYearSelect").value = "2026";
-  byId("perPageSlider").value = "50";
+  byId("perPageSlider").value = String(perPage);
   byId("sortSelect").value = "cited";
   await run("doSearch()");
   const res = byId("resultArea").innerHTML;
-  if (!/14148 total results/.test(res)) throw new Error("doSearch did not render the page: " + res.slice(0, 200));
+  if (res.indexOf(total + " total results") < 0) throw new Error("doSearch did not render the page: " + res.slice(0, 200));
 }
+// CSV quotes the provenance cell when it holds commas/quotes; undo that.
+const unquote = h => (h.startsWith('"') ? h.slice(1, -1).replace(/""/g, '"') : h);
+// All four exports of the current search: provenance text of each + the JSON export object.
+function exportsNow() {
+  run('downloadJSON("search","s.json")');
+  const jsonText = lastBlob();
+  run('downloadCSV("search","s.csv")');
+  const csvText = lastBlob();
+  run('downloadXLSX("search","s.xlsx")');
+  const xlsxH = xlsxSheet.A1.v;
+  run('downloadBibTeX("search","s.bib")');
+  const bibText = lastBlob();
+  return { jsonText, j: JSON.parse(jsonText).export, csvText, csvH: unquote(csvHeader(csvText)), xlsxH, bibText, bibH: bibText.split("\n")[0] };
+}
+const WEB = "https://openalex.org/works?" + OAQ;
+const API = "https://api.openalex.org/works?" + OAQ + "&per-page=100&cursor=*";
+const LINKS = "Full result set on OpenAlex: " + WEB +
+  " (website export up to 100,000 works, CSV/RIS) · API: " + API + " (cursor paging)";
+const TIP = "Tip: narrow the year range to keep each search under 10,000 results.";
+const LIMIT = "(OpenAlex paging limit; ";
 
 (async () => {
   // ── empty keyword: the measured live case ──
@@ -134,7 +160,7 @@ async function search(q) {
   check("2  BibTeX provenance has query: none", /^% .*· query: none ·/.test(bibH));
 
   // 3. server filters always present
-  const wantF = "years 2014–2026 · sort most cited · 50 per page · page 1 of 283 · all types";
+  const wantF = "years 2014–2026 · sort most cited · 50 per page · page 1 of 200 (OpenAlex paging limit; 283 pages by total) · all types";
   check("3  export.filters = " + JSON.stringify(wantF) + " (got " + JSON.stringify(j.filters) + ")", j.filters === wantF);
 
   // 6. totals
@@ -176,7 +202,7 @@ async function search(q) {
   run('currentType="review"; currentFilter="sepsis"; currentSort="title_asc"');
   run('downloadJSON("search","s.json")');
   const j5 = JSON.parse(lastBlob()).export;
-  const want5 = "years 2014–2026 · sort most cited · 50 per page · page 1 of 283 · type: review · " +
+  const want5 = "years 2014–2026 · sort most cited · 50 per page · page 1 of 200 (OpenAlex paging limit; 283 pages by total) · type: review · " +
     'filter: "sepsis" · re-sorted on page: title A→Z';
   check("5  client filters appended (got " + JSON.stringify(j5.filters) + ")", j5.filters === want5);
   check("5  rows_exported 3 with rows_loaded 50 and rows_total 14148 (got " + [j5.rows_exported, j5.rows_loaded, j5.rows_total] + ")",
@@ -184,6 +210,83 @@ async function search(q) {
   run('downloadCSV("search","s.csv")');
   check("7  filtered provenance: showing 3 of 50 rows (14,148 articles matched in total)",
     /showing 3 of 50 rows \(14,148 articles matched in total\)/.test(csvHeader(lastBlob())));
+
+
+  // ── 9. OpenAlex links + paging-limit provenance ──
+  await search("", TOTAL, 50);
+  const big = exportsNow();
+  check("9  total 14148/50: filters say the limit (got " + JSON.stringify(big.j.filters) + ")",
+    big.j.filters.indexOf("page 1 of 200 (OpenAlex paging limit; 283 pages by total)") >= 0);
+  check("9  CSV provenance carries links text", big.csvH.indexOf(LINKS) >= 0);
+  check("9  XLSX provenance carries links text", big.xlsxH.indexOf(LINKS) >= 0);
+  check("9  BibTeX provenance is a % comment carrying links text", /^% /.test(big.bibH) && big.bibH.indexOf(LINKS) >= 0);
+  check("9  CSV and XLSX provenance are the same text", big.csvH === big.xlsxH);
+  check("9  CSV provenance cell is correctly quoted (comma in text)", csvHeader(big.csvText).startsWith('"') && csvHeader(big.csvText).endsWith('"'));
+  check("9  JSON export.openalex_web_url", big.j.openalex_web_url === WEB);
+  check("9  JSON export.openalex_api_url", big.j.openalex_api_url === API);
+  check("9  JSON export.paging_limit_results 10000", big.j.paging_limit_results === 10000);
+  check("9  JSON export.pages_reachable 200, pages_by_total 283 (got " + [big.j.pages_reachable, big.j.pages_by_total] + ")",
+    big.j.pages_reachable === 200 && big.j.pages_by_total === 283);
+  check("9  Tip present in CSV, XLSX and BibTeX when total > 10000",
+    big.csvH.indexOf(TIP) >= 0 && big.xlsxH.indexOf(TIP) >= 0 && big.bibH.indexOf(TIP) >= 0);
+  check("9  provenance line still ends with the ISO date",
+    /· \d{4}-\d{2}-\d{2}$/.test(big.csvH) && /· \d{4}-\d{2}-\d{2}$/.test(big.xlsxH) && /· \d{4}-\d{2}-\d{2}$/.test(big.bibH));
+  console.log("   example (total 14148 / 50 per page): " + big.csvH);
+
+  // 10. small result set: unchanged page text, no limit text, no Tip, links still there
+  await search("", 300, 50);
+  const small = exportsNow();
+  check("10 total 300/50: page text unchanged (got " + JSON.stringify(small.j.filters) + ")",
+    small.j.filters === "years 2014–2026 · sort most cited · 50 per page · page 1 of 6 · all types");
+  check("10 no paging-limit text in any provenance",
+    [small.csvH, small.xlsxH, small.bibH, small.j.filters].every(t => t.indexOf("paging limit") < 0));
+  check("10 no Tip in any provenance", [small.csvH, small.xlsxH, small.bibH].every(t => t.indexOf(TIP) < 0));
+  check("10 links still present in CSV, XLSX, BibTeX",
+    small.csvH.indexOf(LINKS) >= 0 && small.xlsxH.indexOf(LINKS) >= 0 && small.bibH.indexOf(LINKS) >= 0);
+  check("10 JSON fields: limit 10000, reachable 6, by total 6 (got " + [small.j.paging_limit_results, small.j.pages_reachable, small.j.pages_by_total] + ")",
+    small.j.paging_limit_results === 10000 && small.j.pages_reachable === 6 && small.j.pages_by_total === 6);
+
+  // 11. Tip only when total > 10000
+  await search("", 10000, 50);
+  const edge = exportsNow();
+  check("11 total exactly 10000: no Tip, no limit text",
+    edge.csvH.indexOf(TIP) < 0 && edge.csvH.indexOf("paging limit") < 0);
+  await search("", 10001, 50);
+  const over = exportsNow();
+  check("11 total 10001: Tip and limit text present",
+    over.csvH.indexOf(TIP) >= 0 && over.csvH.indexOf(LIMIT) >= 0);
+
+  // 12. no openalex_query from the server: no link text, JSON urls null
+  fakeOAQ = null;
+  await search("", TOTAL, 50);
+  const noq = exportsNow();
+  check("12 no openalex_query: no links text in CSV/XLSX/BibTeX",
+    [noq.csvH, noq.xlsxH, noq.bibH].every(t => t.indexOf("Full result set on OpenAlex") < 0));
+  check("12 no openalex_query: JSON urls null",
+    noq.j.openalex_web_url === null && noq.j.openalex_api_url === null);
+  fakeOAQ = OAQ;
+
+  // 13. the API key never appears in any export
+  const everything = [big, small, edge, over, noq].map(e => [e.jsonText, e.csvText, e.xlsxH, e.bibText].join("\n")).join("\n");
+  check('13 no "api_key" anywhere in any export', everything.indexOf("api_key") < 0);
+
+  // 14. pager note link (shown when total > 10000), href through escAttr
+  const LINK_TEXT = "Open the full result set on OpenAlex";
+  await search("", 10001, 50);
+  const pageOver = byId("resultArea").innerHTML;
+  check("14 total 10001: pager note links to the full result set on OpenAlex (new tab, noopener noreferrer)",
+    pageOver.indexOf('href="' + WEB.replace(/&/g, "&amp;") + '"') >= 0 &&
+    /target="_blank" rel="noopener noreferrer"[^>]*>Open the full result set on OpenAlex</.test(pageOver));
+  await search("", 10000, 50);
+  check("14 total exactly 10000: no pager link", byId("resultArea").innerHTML.indexOf(LINK_TEXT) < 0);
+  fakeOAQ = null;
+  await search("", 10001, 50);
+  check("14 no openalex_query: no pager link", byId("resultArea").innerHTML.indexOf(LINK_TEXT) < 0);
+  fakeOAQ = 'filter=x"><img src=x onerror=1>';
+  await search("", 10001, 50);
+  const hostile = byId("resultArea").innerHTML;
+  check("14 hostile openalex_query is escaped in the pager href", hostile.indexOf('"><img') < 0 && hostile.indexOf("&quot;&gt;&lt;img") >= 0);
+  fakeOAQ = OAQ;
 
   if (failed) {
     console.error("\n" + failed + " check(s) FAILED");
