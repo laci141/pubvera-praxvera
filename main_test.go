@@ -571,3 +571,93 @@ func TestSearchYearRangeValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanSearchQuery(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"a: comma plus space", "heart, failure", "heart failure"},
+		{"b: bare comma", "a,b", "a b"},
+		{"c: runs of commas and spaces", " a ,, b ", "a b"},
+		{"d: only commas", ",,,", ""},
+		{"e: no comma is untouched", "no comma", "no comma"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanSearchQuery(tt.in); got != tt.want {
+				t.Errorf("cleanSearchQuery(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSearchQueryCommaDoesNotSplitFilter pins that a comma typed by the user
+// never reaches the OpenAlex filter value, where it would start a new filter.
+// Both the upstream filter and the openalex_query provenance field are checked.
+func TestSearchQueryCommaDoesNotSplitFilter(t *testing.T) {
+	run := func(t *testing.T, query string) (upstreamFilter, provenance string) {
+		t.Helper()
+		fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			upstreamFilter = r.URL.Query().Get("filter")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+		}))
+		defer fake.Close()
+		t.Setenv("OPENALEX_BASE", fake.URL)
+		body, err := json.Marshal(map[string]string{"query": query})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		handleSearch(rec, httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(string(body))))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var out struct {
+			OpenAlexQuery string `json:"openalex_query"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return upstreamFilter, out.OpenAlexQuery
+	}
+
+	t.Run("a: upstream filter has the cleaned term and the same part count as a comma-free query", func(t *testing.T) {
+		got, _ := run(t, "heart, failure")
+		ref, _ := run(t, "heart failure")
+		if got == "" || ref == "" {
+			t.Fatalf("empty upstream filter: got %q, ref %q", got, ref)
+		}
+		if !strings.Contains(got, "title_and_abstract.search:heart failure") {
+			t.Errorf("filter = %q, want it to contain %q", got, "title_and_abstract.search:heart failure")
+		}
+		if g, r := len(strings.Split(got, ",")), len(strings.Split(ref, ",")); g != r {
+			t.Errorf("filter %q has %d comma parts, want %d (same as %q)", got, g, r, ref)
+		}
+	})
+
+	t.Run("b: openalex_query carries the cleaned term, not the comma", func(t *testing.T) {
+		_, prov := run(t, "heart, failure")
+		if prov == "" {
+			t.Fatal("openalex_query is empty, so the checks below would pass vacuously")
+		}
+		if !strings.Contains(prov, "title_and_abstract.search%3Aheart+failure") {
+			t.Errorf("openalex_query = %q, want it to contain the cleaned term", prov)
+		}
+		if strings.Contains(prov, "heart%2C") {
+			t.Errorf("openalex_query = %q still carries the user's comma", prov)
+		}
+	})
+
+	t.Run("c: a query of only commas behaves like an empty query", func(t *testing.T) {
+		got, prov := run(t, ",,,")
+		ref, refProv := run(t, "")
+		if ref == "" || refProv == "" {
+			t.Fatal("empty-query reference is empty")
+		}
+		if got != ref || prov != refProv {
+			t.Errorf("commas-only: filter %q / provenance %q, want %q / %q", got, prov, ref, refProv)
+		}
+		if strings.Contains(got, "title_and_abstract") {
+			t.Errorf("filter = %q, must not contain a search filter", got)
+		}
+	})
+}
