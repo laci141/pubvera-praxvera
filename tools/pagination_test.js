@@ -86,7 +86,16 @@ async function render(total, perPage) {
   if (has("maxPages")) {
     check("1  maxPages(50) = 200 (got " + run("maxPages(50)") + ")", run("maxPages(50)") === 200);
     check("1  maxPages(20) = 500 (got " + run("maxPages(20)") + ")", run("maxPages(20)") === 500);
+    check("1  maxPages(100) = 100 (got " + run("maxPages(100)") + ")", run("maxPages(100)") === 100);
+    check("1  totalPagesFor(13343, 100) = 100 (got " + run("totalPagesFor(13343, 100)") + ")", run("totalPagesFor(13343, 100)") === 100);
+    check("1  totalPagesFor(1243, 100) = 13 (got " + run("totalPagesFor(1243, 100)") + ")", run("totalPagesFor(1243, 100)") === 13);
   }
+
+  // 1b. the per-page slider offers up to 100
+  const slider = /<input[^>]*id="perPageSlider"[^>]*>/.exec(html);
+  check("1b perPageSlider input found", !!slider && slider[0].length > 0);
+  const sliderMax = slider && /[ ]max="([0-9]+)"/.exec(slider[0]);
+  check("1b perPageSlider max = 100 (got " + (sliderMax && sliderMax[1]) + ")", !!sliderMax && sliderMax[1] === "100");
 
   // 2. the pager, driven through the real doSearch -> render path
   const small = await render(300, 50);

@@ -437,6 +437,19 @@ func TestSearchBasicPagingLimit(t *testing.T) {
 			wantUpstream: 0,
 			wantInBody:   "10,000",
 		},
+		{
+			name:         "per_page 100, page 100 is the last allowed page",
+			body:         `{"query":"x","per_page":100,"page":100}`,
+			wantStatus:   http.StatusOK,
+			wantUpstream: 1,
+		},
+		{
+			name:         "per_page 100, page 101 is refused with 400 and never reaches upstream",
+			body:         `{"query":"x","per_page":100,"page":101}`,
+			wantStatus:   http.StatusBadRequest,
+			wantUpstream: 0,
+			wantInBody:   "10,000",
+		},
 	}
 
 	for _, tt := range tests {
@@ -461,6 +474,46 @@ func TestSearchBasicPagingLimit(t *testing.T) {
 			}
 			if tt.wantInBody != "" && !strings.Contains(rec.Body.String(), tt.wantInBody) {
 				t.Errorf("body = %q, want it to mention %q", rec.Body.String(), tt.wantInBody)
+			}
+		})
+	}
+}
+
+// TestSearchPerPageClamp pins the page-size rule: 1..maxPerPage is forwarded
+// as-is; anything else (<= 0 or above the max) silently falls back to 20.
+func TestSearchPerPageClamp(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"per_page 100 is accepted", `{"query":"x","per_page":100}`, "100"},
+		{"per_page 101 falls back to 20", `{"query":"x","per_page":101}`, "20"},
+		{"per_page 50 is accepted", `{"query":"x","per_page":50}`, "50"},
+		{"per_page 0 falls back to 20", `{"query":"x","per_page":0}`, "20"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Query().Get("per-page")
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			handleSearch(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+			}
+			if got == "" {
+				t.Fatalf("upstream received no per-page parameter")
+			}
+			if got != tt.want {
+				t.Errorf("upstream per-page = %q, want %q", got, tt.want)
 			}
 		})
 	}
