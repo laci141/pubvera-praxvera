@@ -1291,10 +1291,29 @@
       try { text = await res.text(); } catch (e) { /* body unreadable */ }
       let d = null;
       try { d = JSON.parse(text); } catch (e) { /* plain text or empty */ }
-      let e = new Error((d && d.error) || ('HTTP ' + res.status));
+      let e = new Error(errorMessageFor(res.status, text));
       e.status = res.status;
       e.data = d;
       return e;
+    }
+
+    // Message for a failed response (errorHTML adds the "Error: " prefix). A
+    // JSON "error" string wins for every status; else a 4xx plain body is
+    // shown; else "HTTP <status>". Server text is cut to 200 characters.
+    function errorMessageFor(status, bodyText) {
+      let t = String(bodyText == null ? '' : bodyText).trim();
+      try {
+        let d = JSON.parse(t);
+        if (d && typeof d.error === 'string' && d.error.trim()) return d.error.trim().slice(0, 200);
+      } catch (e) { /* plain text or empty */ }
+      if (status >= 400 && status < 500 && t) return t.slice(0, 200);
+      return 'HTTP ' + status;
+    }
+
+    // Client-side year check: '' when fine, else the message to show.
+    function yearRangeError(from, to) {
+      let f = Number(from), t = Number(to);
+      return (isFinite(f) && isFinite(t) && f && t && f > t) ? 'From Year must not be later than To Year.' : '';
     }
 
     // Bridge to the module script at the end of this file: the sign-in button
@@ -1366,6 +1385,11 @@
       let sort = document.getElementById('sortSelect').value;
 
       let resultDiv = document.getElementById('resultArea');
+      let yearErr = yearRangeError(fromYear, toYear);
+      if (yearErr) {
+        resultDiv.innerHTML = '<div class="error-box">' + esc(yearErr) + '</div>';
+        return;
+      }
       resultDiv.innerHTML = '<div class="spinner"></div>';
       document.getElementById('searchBtn').disabled = true;
 
