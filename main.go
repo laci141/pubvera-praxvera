@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -258,6 +260,46 @@ func cleanSearchQuery(q string) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(q, ",", " ")), " ")
 }
 
+// writeJSONError answers with {"error": msg}, the shape the UI shows for 5xx.
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// upstreamError maps a non-200 OpenAlex status to the status and message this
+// server answers with. A 429 becomes 503 with a Retry-After: the upstream value
+// when it is whole seconds in 1..300, else 30. The message never carries the
+// URL or the API key.
+func upstreamError(status int, retryAfter string) (code int, msg string, retryAfterOut string) {
+	switch {
+	case status == http.StatusTooManyRequests:
+		n := 30
+		if v, err := strconv.Atoi(retryAfter); err == nil && v >= 1 && v <= 300 {
+			n = v
+		}
+		return http.StatusServiceUnavailable, fmt.Sprintf("OpenAlex rate limit reached — try again in %d seconds", n), strconv.Itoa(n)
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return http.StatusBadGateway, "OpenAlex rejected the server's credentials — this is a configuration problem", ""
+	case status == http.StatusConflict:
+		return http.StatusBadGateway, "OpenAlex API key missing or quota exceeded (HTTP 409)", ""
+	case status >= 500:
+		return http.StatusBadGateway, "OpenAlex is temporarily unavailable — try again shortly", ""
+	default:
+		return http.StatusBadGateway, fmt.Sprintf("OpenAlex rejected the request (HTTP %d)", status), ""
+	}
+}
+
+// transportError classifies a failed OpenAlex call: a timeout is 504, anything
+// else 502. The error itself is only logged, since it carries the request URL.
+func transportError(err error) (code int, msg string) {
+	var ne net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		return http.StatusGatewayTimeout, "OpenAlex did not respond in time — try again shortly"
+	}
+	return http.StatusBadGateway, "Could not reach OpenAlex — try again shortly"
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST", http.StatusMethodNotAllowed)
@@ -340,14 +382,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Get(apiURL)
 	if err != nil {
 		log.Print(err)
-		http.Error(w, "OpenAlex error", http.StatusBadGateway)
+		code, msg := transportError(err)
+		writeJSONError(w, code, msg)
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, "read error", http.StatusBadGateway)
+		writeJSONError(w, http.StatusBadGateway, "read error")
 		return
 	}
 
@@ -357,18 +400,18 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			snippet = snippet[:300]
 		}
 		log.Printf("openalex HTTP %d: %s", resp.StatusCode, snippet)
-		msg := fmt.Sprintf("OpenAlex error (HTTP %d) — try again shortly", resp.StatusCode)
-		if resp.StatusCode == http.StatusConflict {
-			msg = "OpenAlex API key missing or quota exceeded (HTTP 409)"
+		code, msg, retryAfter := upstreamError(resp.StatusCode, resp.Header.Get("Retry-After"))
+		if retryAfter != "" {
+			w.Header().Set("Retry-After", retryAfter)
 		}
-		http.Error(w, msg, http.StatusBadGateway)
+		writeJSONError(w, code, msg)
 		return
 	}
 
 	var oaResp openAlexResponse
 	if err := json.Unmarshal(body, &oaResp); err != nil {
 		log.Print(err)
-		http.Error(w, "parse error", http.StatusBadGateway)
+		writeJSONError(w, http.StatusBadGateway, "parse error")
 		return
 	}
 

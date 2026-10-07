@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -658,6 +661,228 @@ func TestSearchQueryCommaDoesNotSplitFilter(t *testing.T) {
 		}
 		if strings.Contains(got, "title_and_abstract") {
 			t.Errorf("filter = %q, must not contain a search filter", got)
+		}
+	})
+}
+
+const (
+	wantConfigMsg      = "OpenAlex rejected the server's credentials — this is a configuration problem"
+	wantUnavailableMsg = "OpenAlex is temporarily unavailable — try again shortly"
+	wantConflictMsg    = "OpenAlex API key missing or quota exceeded (HTTP 409)"
+	wantRate30Msg      = "OpenAlex rate limit reached — try again in 30 seconds"
+)
+
+func TestUpstreamError(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		retryAfter string
+		wantCode   int
+		wantMsg    string
+		wantRetry  string
+	}{
+		{"429 passes Retry-After 12", 429, "12", 503, "OpenAlex rate limit reached — try again in 12 seconds", "12"},
+		{"429 passes Retry-After 1", 429, "1", 503, "OpenAlex rate limit reached — try again in 1 seconds", "1"},
+		{"429 passes Retry-After 300", 429, "300", 503, "OpenAlex rate limit reached — try again in 300 seconds", "300"},
+		{"429 without Retry-After", 429, "", 503, wantRate30Msg, "30"},
+		{"429 with text Retry-After", 429, "abc", 503, wantRate30Msg, "30"},
+		{"429 with Retry-After 0", 429, "0", 503, wantRate30Msg, "30"},
+		{"429 with Retry-After 301", 429, "301", 503, wantRate30Msg, "30"},
+		{"429 with HTTP-date Retry-After", 429, "Wed, 21 Oct 2026 07:28:00 GMT", 503, wantRate30Msg, "30"},
+		{"401", 401, "", 502, wantConfigMsg, ""},
+		{"403", 403, "", 502, wantConfigMsg, ""},
+		{"500", 500, "", 502, wantUnavailableMsg, ""},
+		{"503", 503, "", 502, wantUnavailableMsg, ""},
+		{"400", 400, "", 502, "OpenAlex rejected the request (HTTP 400)", ""},
+		{"404", 404, "", 502, "OpenAlex rejected the request (HTTP 404)", ""},
+		{"409", 409, "", 502, wantConflictMsg, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, msg, retry := upstreamError(tt.status, tt.retryAfter)
+			if code != tt.wantCode {
+				t.Errorf("code = %d, want %d", code, tt.wantCode)
+			}
+			if msg == "" || msg != tt.wantMsg {
+				t.Errorf("msg = %q, want %q (non-empty)", msg, tt.wantMsg)
+			}
+			if retry != tt.wantRetry {
+				t.Errorf("retryAfter = %q, want %q", retry, tt.wantRetry)
+			}
+			if tt.status >= 400 && tt.status < 500 && tt.status != 429 && strings.Contains(msg, "try again") {
+				t.Errorf("msg %q must not say try again for HTTP %d", msg, tt.status)
+			}
+			if strings.Contains(msg, "api_key") {
+				t.Errorf("msg %q leaks api_key", msg)
+			}
+		})
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return false }
+
+func TestTransportError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantMsg  string
+	}{
+		{"deadline exceeded", fmt.Errorf("Get \"http://x/?api_key=SECRET\": %w", context.DeadlineExceeded), 504, "OpenAlex did not respond in time — try again shortly"},
+		{"net.Error timeout", net.Error(timeoutErr{}), 504, "OpenAlex did not respond in time — try again shortly"},
+		{"connection refused", errors.New("dial tcp: connection refused"), 502, "Could not reach OpenAlex — try again shortly"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, msg := transportError(tt.err)
+			if code != tt.wantCode {
+				t.Errorf("code = %d, want %d", code, tt.wantCode)
+			}
+			if msg == "" || msg != tt.wantMsg {
+				t.Errorf("msg = %q, want %q (non-empty)", msg, tt.wantMsg)
+			}
+			if strings.Contains(msg, "api_key") || strings.Contains(msg, "SECRET") {
+				t.Errorf("msg %q leaks the URL or key", msg)
+			}
+		})
+	}
+}
+
+// postSearch runs the handler against a fake upstream that answers with the
+// given status, headers and body, and returns the recorded response.
+func postSearch(t *testing.T, status int, header map[string]string, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for k, v := range header {
+			w.Header().Set(k, v)
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer fake.Close()
+	t.Setenv("OPENALEX_BASE", fake.URL)
+	t.Setenv("OPENALEX_API_KEY", "SECRETKEY")
+	req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(`{"query":"x"}`))
+	rec := httptest.NewRecorder()
+	handleSearch(rec, req)
+	return rec
+}
+
+// jsonError asserts the response is JSON with a non-empty string "error" and
+// that nothing in the body leaks the key or the upstream URL.
+func jsonError(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("body is not JSON: %v; body: %s", err, rec.Body.String())
+	}
+	if out.Error == "" {
+		t.Fatalf("empty \"error\" in body: %s", rec.Body.String())
+	}
+	for _, bad := range []string{"api_key", "SECRETKEY", "127.0.0.1", "http://"} {
+		if strings.Contains(rec.Body.String(), bad) {
+			t.Errorf("body leaks %q: %s", bad, rec.Body.String())
+		}
+	}
+	return out.Error
+}
+
+func TestSearchUpstreamErrorMapping(t *testing.T) {
+	t.Run("429 with Retry-After 12", func(t *testing.T) {
+		rec := postSearch(t, 429, map[string]string{"Retry-After": "12"}, "slow down")
+		if rec.Code != 503 {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "12" {
+			t.Errorf("Retry-After = %q, want 12", got)
+		}
+		if msg := jsonError(t, rec); !strings.Contains(msg, "12 seconds") {
+			t.Errorf("error = %q, want it to contain \"12 seconds\"", msg)
+		}
+	})
+	t.Run("429 without Retry-After", func(t *testing.T) {
+		rec := postSearch(t, 429, nil, "slow down")
+		if rec.Code != 503 {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "30" {
+			t.Errorf("Retry-After = %q, want 30", got)
+		}
+		if msg := jsonError(t, rec); !strings.Contains(msg, "30 seconds") {
+			t.Errorf("error = %q, want it to contain \"30 seconds\"", msg)
+		}
+	})
+	t.Run("401", func(t *testing.T) {
+		rec := postSearch(t, 401, nil, "nope")
+		if rec.Code != 502 {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		if msg := jsonError(t, rec); msg != wantConfigMsg {
+			t.Errorf("error = %q, want %q", msg, wantConfigMsg)
+		}
+		if strings.Contains(rec.Body.String(), "try again") {
+			t.Errorf("body must not say try again: %s", rec.Body.String())
+		}
+	})
+	t.Run("500", func(t *testing.T) {
+		rec := postSearch(t, 500, nil, "boom")
+		if rec.Code != 502 {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		if msg := jsonError(t, rec); !strings.Contains(msg, "temporarily unavailable") {
+			t.Errorf("error = %q, want it to contain \"temporarily unavailable\"", msg)
+		}
+	})
+	t.Run("400", func(t *testing.T) {
+		rec := postSearch(t, 400, nil, "bad")
+		if rec.Code != 502 {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		if msg := jsonError(t, rec); msg != "OpenAlex rejected the request (HTTP 400)" {
+			t.Errorf("error = %q", msg)
+		}
+	})
+	t.Run("409", func(t *testing.T) {
+		rec := postSearch(t, 409, nil, "quota")
+		if rec.Code != 502 {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		if msg := jsonError(t, rec); msg != wantConflictMsg {
+			t.Errorf("error = %q, want %q", msg, wantConflictMsg)
+		}
+	})
+	t.Run("unparseable 200 body", func(t *testing.T) {
+		rec := postSearch(t, 200, nil, "not json")
+		if rec.Code != 502 {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		if msg := jsonError(t, rec); msg != "parse error" {
+			t.Errorf("error = %q, want parse error", msg)
+		}
+	})
+	t.Run("unreachable upstream", func(t *testing.T) {
+		fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		base := fake.URL
+		fake.Close()
+		t.Setenv("OPENALEX_BASE", base)
+		t.Setenv("OPENALEX_API_KEY", "SECRETKEY")
+		req := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(`{"query":"x"}`))
+		rec := httptest.NewRecorder()
+		handleSearch(rec, req)
+		if rec.Code != 502 {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		if msg := jsonError(t, rec); msg != "Could not reach OpenAlex — try again shortly" {
+			t.Errorf("error = %q", msg)
 		}
 	})
 }
