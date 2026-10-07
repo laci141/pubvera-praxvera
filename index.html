@@ -1294,7 +1294,17 @@
       let e = new Error(errorMessageFor(res.status, text));
       e.status = res.status;
       e.data = d;
+      let ra = retryAfterSeconds(res.headers && res.headers.get('Retry-After'));
+      if (ra) e.retryAfter = ra;
       return e;
+    }
+
+    // Retry-After as whole seconds: only a plain integer string 1..300 counts
+    // (the backend sends nothing else); anything else, an HTTP-date included, is 0.
+    function retryAfterSeconds(v) {
+      if (typeof v !== 'string' || !/^[0-9]+$/.test(v)) return 0;
+      let n = Number(v);
+      return (n >= 1 && n <= 300) ? n : 0;
     }
 
     // Message for a failed response (errorHTML adds the "Error: " prefix). A
@@ -1370,7 +1380,9 @@
         // The quota service could not be reached. The request was not rejected
         // and the user did nothing wrong, so this must not read as a failure.
         return '<div class="errcard"><h4>Temporarily unavailable</h4>' +
-          '<p>The service is temporarily unavailable. Please try again in a moment.</p></div>';
+          '<p>The service is temporarily unavailable. Please try again in a moment.</p>' +
+          (e.retryAfter ? '<p>' + esc('Try again in ' + e.retryAfter + (e.retryAfter === 1 ? ' second.' : ' seconds.')) + '</p>' : '') +
+          '</div>';
       }
       return '<div class="error-box">Error: ' + esc(e && e.message ? e.message : 'Unknown error') + '</div>';
     }

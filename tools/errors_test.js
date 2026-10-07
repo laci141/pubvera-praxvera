@@ -43,7 +43,7 @@ function makeEl() {
 const els = {};
 const byId = id => (els[id] = els[id] || makeEl());
 let fetchCalls = 0;
-let fakeStatus = 200, fakeBody = "";
+let fakeStatus = 200, fakeBody = "", fakeHeaders = {};
 const sandbox = {
   console, Date, Math, JSON, Number, String, Object, Array, Promise, RegExp, Error, parseInt, isNaN,
   alert: m => { throw new Error("unexpected alert: " + m); },
@@ -51,6 +51,7 @@ const sandbox = {
   fetch: async () => {
     fetchCalls++;
     return { ok: fakeStatus < 400, status: fakeStatus, text: async () => fakeBody,
+             headers: { get: n => (n in fakeHeaders ? fakeHeaders[n] : null) },
              json: async () => ({ total: 0, page: 1, articles: [] }) };
   },
   document: {
@@ -119,6 +120,36 @@ async function search(status, body, from, to) {
   const xss = await search(400, "<script>alert(1)</script>");
   check("12 <script> body is shown escaped", xss.length > 0 && xss.indexOf("&lt;script&gt;alert(1)&lt;/script&gt;") >= 0);
   check("12 no raw <script> tag in the markup", xss.length > 0 && xss.indexOf("<script") < 0);
+
+  // Retry-After on the 503 card (from the OpenAlex 429 mapping, PR #18).
+  check("17 retryAfterSeconds is defined", has("retryAfterSeconds"));
+  if (has("retryAfterSeconds")) {
+    const r = v => sandbox.retryAfterSeconds(v);
+    eq("18 '12' -> 12", r("12"), 12);
+    eq("18 '1' -> 1", r("1"), 1);
+    eq("18 '300' -> 300", r("300"), 300);
+    for (const v of ["0", "301", "", null, "abc", "12.5", " 12", "Wed, 21 Oct 2026 07:28:00 GMT"])
+      check("18 " + JSON.stringify(v) + " -> 0", r(v) === 0);
+  }
+  const OLD503 = '<div class="errcard"><h4>Temporarily unavailable</h4>' +
+    '<p>The service is temporarily unavailable. Please try again in a moment.</p></div>';
+  fakeHeaders = { "Retry-After": "12" };
+  const ra12 = await search(503, '{"error":"OpenAlex rate limit reached — try again in 12 seconds"}');
+  check("19 503 + Retry-After 12 -> title", ra12.length > 0 && ra12.indexOf("Temporarily unavailable") >= 0);
+  check("19 503 + Retry-After 12 -> 'Try again in 12 seconds.'", ra12.length > 0 && ra12.indexOf("Try again in 12 seconds.") >= 0);
+  fakeHeaders = { "Retry-After": "1" };
+  const ra1 = await search(503, "");
+  check("20 503 + Retry-After 1 -> 'Try again in 1 second.'", ra1.length > 0 && ra1.indexOf("Try again in 1 second.") >= 0);
+  check("20 503 + Retry-After 1 -> not plural", ra1.indexOf("1 seconds") < 0);
+  fakeHeaders = {};
+  const ra0 = await search(503, "");
+  eq("21 503 without Retry-After -> old card", ra0, OLD503);
+  check("21 503 without Retry-After -> no 'Try again in'", ra0.length > 0 && ra0.indexOf("Try again in") < 0);
+  fakeHeaders = { "Retry-After": "301" };
+  eq("21 503 + invalid Retry-After -> old card", await search(503, ""), OLD503);
+  fakeHeaders = { "Retry-After": "12" };
+  eq("22 rendered 502 JSON error unchanged", await search(502, '{"error":"bad gateway"}'), box("bad gateway"));
+  fakeHeaders = {};
 
   // yearRangeError, direct.
   check("13 yearRangeError is defined", has("yearRangeError"));
