@@ -251,6 +251,13 @@ type searchResponse struct {
 	OpenAlexQuery string `json:"openalex_query"`
 }
 
+// cleanSearchQuery makes a user query safe to place inside the OpenAlex filter
+// value. A comma separates filters there, so every comma becomes a space; runs
+// of whitespace are then collapsed and the ends trimmed. Nothing else changes.
+func cleanSearchQuery(q string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(q, ",", " ")), " ")
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST", http.StatusMethodNotAllowed)
@@ -297,8 +304,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	} else if req.FromYear > 0 {
 		filters = append(filters, fmt.Sprintf("publication_year:%d", req.FromYear))
 	}
-	if req.Query != "" {
-		filters = append(filters, "title_and_abstract.search:"+req.Query)
+	if query := cleanSearchQuery(req.Query); query != "" {
+		filters = append(filters, "title_and_abstract.search:"+query)
 	}
 
 	sortBy := "cited_by_count:desc"
