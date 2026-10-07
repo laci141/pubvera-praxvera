@@ -33,6 +33,10 @@ const maxRequestBody = 16 << 10
 // exceed it (measured: per-page=50 answers 200 on page 200 and 400 on page 201).
 const maxBasicResults = 10000
 
+// maxPerPage is the largest page size the search accepts; anything above it
+// (or <= 0) falls back to 20.
+const maxPerPage = 100
+
 // minYear is the earliest year the search accepts. The latest is the current
 // year plus one (an issue can be dated ahead of the calendar year).
 const minYear = 1800
@@ -316,7 +320,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if req.PerPage <= 0 || req.PerPage > 50 {
+	if req.PerPage <= 0 || req.PerPage > maxPerPage {
 		req.PerPage = 20
 	}
 	if req.Page < 1 {
