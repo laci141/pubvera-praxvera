@@ -324,12 +324,30 @@
     }
     /* ── Export / filter / sort toolbar (export-suite) ── */
     .meta-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;gap:12px;flex-wrap:wrap}
-    .meta{font-size:.82rem;color:#99a}
+    .meta{font-size:.82rem;color:#99a;min-width:0}
     .dl{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#cdd6ea;
       padding:4px 14px;border-radius:999px;font-size:.75rem;font-weight:600;cursor:pointer;
       transition:.2s;white-space:nowrap;flex-shrink:0}
     .dl:hover{background:rgba(255,255,255,.15);border-color:#3b82f6;color:#fff}
-    .dl-group{display:flex;gap:8px;flex-shrink:0;align-items:center;flex-wrap:wrap}
+    .dl-group{display:flex;gap:8px;min-width:0;max-width:100%;align-items:center;flex-wrap:wrap}
+    /* Export menu (WAI-ARIA menu button). The panel is one SOLID colour: a gradient would read as a
+       transparent background-color. rgba(18,22,46,.9) is the toolbar's own option colour (#12162e). */
+    .dl-wrap{position:relative;display:inline-block;margin-left:auto}
+    .dl-trigger{min-height:44px;min-width:44px}
+    .dl-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:50;min-width:150px;max-width:calc(100vw - 32px);
+      padding:6px;border:1px solid rgba(255,255,255,.14);border-radius:14px;display:flex;flex-direction:column;gap:2px;
+      background:rgba(18,22,46,.9);box-shadow:0 14px 36px -12px rgba(0,0,0,.8)}
+    .dl-menu[hidden]{display:none}
+    .dl-menu [role="menuitem"]{display:block;width:100%;min-height:44px;text-align:left;font:inherit;font-size:.82rem;
+      font-weight:600;color:#e8eef7;background:none;border:0;border-radius:8px;padding:8px 12px;cursor:pointer}
+    .dl-menu [role="menuitem"]:hover{background:rgba(255,255,255,.14)}
+    .dl-menu [role="menuitem"]:focus-visible{outline:2px solid #fff;outline-offset:-2px;background:rgba(255,255,255,.14)}
+    /* Long titles, DOIs, URLs and author lists must not push the page sideways on phones. */
+    .article-title,.article-link,.article-authors,.meta,.results-header,.article-abstract{overflow-wrap:anywhere}
+    /* Desktop only: the count text keeps a 260px basis instead of being squeezed by the toolbar. */
+    @media (min-width: 769px) {
+      .meta{flex:1 1 260px}
+    }
     .qfilter{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;
       padding:4px 14px;color:#e8eef7;font-size:.78rem;width:190px}
     .qfilter:focus{outline:none;border-color:#3b82f6}
@@ -344,6 +362,7 @@
     .pager-info{font-size:.82rem;color:#99a;white-space:nowrap}
     .articles-grid {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       gap: 20px;
     }
     .article-card {
@@ -1057,11 +1076,70 @@
       URL.revokeObjectURL(url);
     }
 
+    // ── Export menu (WAI-ARIA APG "Menu Button") ──
+    // Every close path ends in closeExportMenus(opener), so aria-expanded, hidden and focus cannot drift
+    // apart. The opener is passed explicitly: WebKit does not focus a button on mouse click.
+    const EXPORTERS={xlsx:downloadXLSX,csv:downloadCSV,json:downloadJSON,bib:downloadBibTeX};
+    function closeExportMenus(opener){
+      document.querySelectorAll(".dl-menu:not([hidden])").forEach(m=>{
+        m.hidden=true;
+        const t=document.querySelector('[aria-controls="'+m.id+'"]');
+        if(t)t.setAttribute("aria-expanded","false");
+      });
+      if(opener)opener.focus();
+    }
+    function toggleExportMenu(btn){
+      const menu=document.getElementById(btn.getAttribute("aria-controls"));
+      const wasOpen=!menu.hidden;
+      closeExportMenus(null);   // at most one menu open
+      if(wasOpen){btn.focus();return;}
+      menu.hidden=false;
+      btn.setAttribute("aria-expanded","true");
+      menu.querySelector('[role="menuitem"]').focus();
+    }
+    document.addEventListener("click",e=>{
+      const t=e.target;
+      const item=t.closest?t.closest('.dl-menu [role="menuitem"]'):null;
+      if(item){
+        const opener=document.querySelector('[aria-controls="'+item.closest(".dl-menu").id+'"]');
+        const run=EXPORTERS[item.dataset.export];
+        if(run)run(item.dataset.key,item.dataset.file);
+        closeExportMenus(opener);   // after a download focus returns to the opener
+        return;
+      }
+      const trigger=t.closest?t.closest('.dl-wrap [aria-haspopup="menu"]'):null;
+      if(trigger){toggleExportMenu(trigger);return;}
+      // Untrusted clicks are ignored: the download helpers click a detached <a>.
+      if(e.isTrusted&&!(t.closest&&t.closest(".dl-wrap")))closeExportMenus(null);
+    });
+    document.addEventListener("keydown",e=>{
+      const t=e.target;
+      // Enter/Space open through the button's native click; ArrowDown opens here.
+      if(e.key==="ArrowDown"&&t.matches&&t.matches('.dl-wrap [aria-haspopup="menu"]')&&t.getAttribute("aria-expanded")!=="true"){
+        e.preventDefault();toggleExportMenu(t);return;
+      }
+      const menu=document.querySelector(".dl-menu:not([hidden])");
+      if(!menu)return;
+      const opener=document.querySelector('[aria-controls="'+menu.id+'"]');
+      if(e.key==="Escape"){e.preventDefault();closeExportMenus(opener);return;}
+      if(!menu.contains(t))return;
+      const items=Array.from(menu.querySelectorAll('[role="menuitem"]')),i=items.indexOf(document.activeElement);
+      if(e.key==="ArrowDown"){e.preventDefault();items[(i+1)%items.length].focus();}
+      else if(e.key==="ArrowUp"){e.preventDefault();items[(i-1+items.length)%items.length].focus();}
+      else if(e.key==="Home"){e.preventDefault();items[0].focus();}
+      else if(e.key==="End"){e.preventDefault();items[items.length-1].focus();}
+      else if(e.key==="Tab")closeExportMenus(opener);   // focus goes to the trigger, then Tab moves on
+    });
+
     // Toolbar above the cards: export buttons, client-side sort, live filter.
     function metaRow(text,key,filename){
       const csvName=String(filename).replace(/\.json$/i,".csv");
       const xlsxName=String(filename).replace(/\.json$/i,".xlsx");
       const bibName=String(filename).replace(/\.json$/i,".bib");
+      // One trigger and one menu per toolbar; the id comes from the export key.
+      const mid="dlm-"+key;
+      const item=(fmt,name,label,title)=>'<button type="button" role="menuitem" data-export="'+fmt+'" data-key="'+key+
+        '" data-file="'+name+'"'+(title?' title="'+title+'"':'')+'>'+label+'</button>';
       return '<div class="meta-row"><span class="meta">'+text+'<span class="qcount"></span></span>'+
         '<span class="dl-group">'+
         '<select class="qsort" id="typeFilter" title="Filter by article type" onchange="applyTypeFilter()">'+
@@ -1080,10 +1158,14 @@
         '<option value="title_asc">Title (A→Z)</option>'+
         '</select>'+
         '<input class="qfilter" type="text" placeholder="🔍 Filter results…">'+
-        '<button class="dl" title="BibTeX citations for these papers" onclick="downloadBibTeX(\''+key+'\',\''+bibName+'\')">⬇ BibTeX</button>'+
-        '<button class="dl" onclick="downloadXLSX(\''+key+'\',\''+xlsxName+'\')">⬇ Excel</button>'+
-        '<button class="dl" onclick="downloadCSV(\''+key+'\',\''+csvName+'\')">⬇ CSV</button>'+
-        '<button class="dl" onclick="downloadJSON(\''+key+'\',\''+filename+'\')">⬇ JSON</button>'+
+        '<div class="dl-wrap">'+
+        '<button type="button" class="dl dl-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="'+mid+'">⬇ Export ▾</button>'+
+        '<div class="dl-menu" role="menu" id="'+mid+'" hidden>'+
+        item("xlsx",xlsxName,"Excel")+
+        item("csv",csvName,"CSV")+
+        item("json",filename,"JSON")+
+        item("bib",bibName,"BibTeX","BibTeX citations for these papers")+
+        '</div></div>'+
         '</span></div>';
     }
 
