@@ -179,9 +179,9 @@ const YEARS = "years 2014–" + CY;
   check("7  CSV provenance line (got " + JSON.stringify(csvH) + ")", csvH.startsWith('"' + wantLine) || csvH.startsWith(wantLine));
   check("7  XLSX provenance line", xlsxH.startsWith(wantLine));
 
-  // 8. XLSX autofilter: header row 2 to the last data row, all 9 columns
+  // 8. XLSX autofilter: header row 2 to the last data row, all 10 columns
   const gotRef = xlsxSheet["!autofilter"] && xlsxSheet["!autofilter"].ref;
-  check('8  XLSX autofilter ref "A2:I52" (got ' + JSON.stringify(gotRef) + ")", gotRef === "A2:I52");
+  check('8  XLSX autofilter ref "A2:J52" (got ' + JSON.stringify(gotRef) + ")", gotRef === "A2:J52");
 
   // 4. the export reads what was sent, not the live form
   byId("queryInput").value = "cancer";
