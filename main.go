@@ -295,13 +295,25 @@ func upstreamError(status int, retryAfter string) (code int, msg string, retryAf
 }
 
 // transportError classifies a failed OpenAlex call: a timeout is 504, anything
-// else 502. The error itself is only logged, since it carries the request URL.
+// else 502. The error itself is never logged, since it carries the request URL.
 func transportError(err error) (code int, msg string) {
-	var ne net.Error
-	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+	if isTimeout(err) {
 		return http.StatusGatewayTimeout, "OpenAlex did not respond in time — try again shortly"
 	}
 	return http.StatusBadGateway, "Could not reach OpenAlex — try again shortly"
+}
+
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+}
+
+// transportCategory is the log-safe label for a failed OpenAlex call.
+func transportCategory(err error) string {
+	if isTimeout(err) {
+		return "timeout"
+	}
+	return "connection error"
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -385,7 +397,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: openAlexTimeout}
 	resp, err := client.Get(apiURL)
 	if err != nil {
-		log.Print(err)
+		// err embeds the URL with api_key: log a category only.
+		log.Printf("openalex request failed: %s", transportCategory(err))
 		code, msg := transportError(err)
 		writeJSONError(w, code, msg)
 		return
@@ -399,11 +412,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		snippet := string(body)
-		if len(snippet) > 300 {
-			snippet = snippet[:300]
-		}
-		log.Printf("openalex HTTP %d: %s", resp.StatusCode, snippet)
+		// The body may echo the query string (with api_key): log the status only.
+		log.Printf("openalex HTTP %d", resp.StatusCode)
 		code, msg, retryAfter := upstreamError(resp.StatusCode, resp.Header.Get("Retry-After"))
 		if retryAfter != "" {
 			w.Header().Set("Retry-After", retryAfter)
@@ -414,7 +424,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	var oaResp openAlexResponse
 	if err := json.Unmarshal(body, &oaResp); err != nil {
-		log.Print(err)
+		log.Print("openalex response parse error")
 		writeJSONError(w, http.StatusBadGateway, "parse error")
 		return
 	}
