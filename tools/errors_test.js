@@ -24,6 +24,9 @@ if (start < 0 || end < 0 || end <= start) {
 }
 const section = html.slice(start, end);
 
+// The default To Year, computed as the page computes it (index.html initYears).
+const CY = new Date().getFullYear();
+
 let failed = 0;
 function check(label, ok) {
   if (!ok) failed++;
@@ -73,7 +76,7 @@ async function search(status, body, from, to) {
   fakeStatus = status; fakeBody = body; fetchCalls = 0;
   byId("queryInput").value = "sepsis";
   byId("fromYearSelect").value = String(from === undefined ? 2014 : from);
-  byId("toYearSelect").value = String(to === undefined ? 2026 : to);
+  byId("toYearSelect").value = String(to === undefined ? CY : to);
   byId("perPageSlider").value = "50";
   byId("sortSelect").value = "cited";
   await run("doSearch()");

@@ -22,6 +22,9 @@ if (start < 0 || end < 0 || end <= start) {
 }
 const section = html.slice(start, end);
 
+// The default To Year, computed as the page computes it (index.html initYears).
+const CY = new Date().getFullYear();
+
 let failed = 0;
 function check(label, ok) {
   if (!ok) failed++;
@@ -31,7 +34,7 @@ function check(label, ok) {
 // ── fixture: one page of 50 rows, as /api/search returns them ──
 const TOTAL = 14148;
 // What the server answers in openalex_query: filter and sort only, encoded.
-const OAQ = "filter=primary_location.source.issn%3A0028-4793%2Cpublication_year%3A2014-2026&sort=cited_by_count%3Adesc";
+const OAQ = "filter=primary_location.source.issn%3A0028-4793%2Cpublication_year%3A2014-" + CY + "&sort=cited_by_count%3Adesc";
 let fakeTotal = TOTAL;
 let fakeOAQ = OAQ;
 const articles = [];
@@ -111,7 +114,7 @@ async function search(q, total = TOTAL, perPage = 50) {
   fakeTotal = total;
   byId("queryInput").value = q;
   byId("fromYearSelect").value = "2014";
-  byId("toYearSelect").value = "2026";
+  byId("toYearSelect").value = String(CY);
   byId("perPageSlider").value = String(perPage);
   byId("sortSelect").value = "cited";
   await run("doSearch()");
@@ -138,6 +141,8 @@ const LINKS = "Full result set on OpenAlex: " + WEB +
   " (website export up to 100,000 works, CSV/RIS) · API: " + API + " (cursor paging)";
 const TIP = "Tip: narrow the year range to keep each search under 10,000 results.";
 const LIMIT = "(OpenAlex paging limit; ";
+// The years text for the search() range 2014..CY, in the page's format.
+const YEARS = "years 2014–" + CY;
 
 (async () => {
   // ── empty keyword: the measured live case ──
@@ -160,7 +165,7 @@ const LIMIT = "(OpenAlex paging limit; ";
   check("2  BibTeX provenance has query: none", /^% .*· query: none ·/.test(bibH));
 
   // 3. server filters always present
-  const wantF = "years 2014–2026 · sort most cited · 50 per page · page 1 of 200 (OpenAlex paging limit; 283 pages by total) · all types";
+  const wantF = YEARS + " · sort most cited · 50 per page · page 1 of 200 (OpenAlex paging limit; 283 pages by total) · all types";
   check("3  export.filters = " + JSON.stringify(wantF) + " (got " + JSON.stringify(j.filters) + ")", j.filters === wantF);
 
   // 6. totals
@@ -202,7 +207,7 @@ const LIMIT = "(OpenAlex paging limit; ";
   run('currentType="review"; currentFilter="sepsis"; currentSort="title_asc"');
   run('downloadJSON("search","s.json")');
   const j5 = JSON.parse(lastBlob()).export;
-  const want5 = "years 2014–2026 · sort most cited · 50 per page · page 1 of 200 (OpenAlex paging limit; 283 pages by total) · type: review · " +
+  const want5 = YEARS + " · sort most cited · 50 per page · page 1 of 200 (OpenAlex paging limit; 283 pages by total) · type: review · " +
     'filter: "sepsis" · re-sorted on page: title A→Z';
   check("5  client filters appended (got " + JSON.stringify(j5.filters) + ")", j5.filters === want5);
   check("5  rows_exported 3 with rows_loaded 50 and rows_total 14148 (got " + [j5.rows_exported, j5.rows_loaded, j5.rows_total] + ")",
@@ -237,7 +242,7 @@ const LIMIT = "(OpenAlex paging limit; ";
   await search("", 300, 50);
   const small = exportsNow();
   check("10 total 300/50: page text unchanged (got " + JSON.stringify(small.j.filters) + ")",
-    small.j.filters === "years 2014–2026 · sort most cited · 50 per page · page 1 of 6 · all types");
+    small.j.filters === YEARS + " · sort most cited · 50 per page · page 1 of 6 · all types");
   check("10 no paging-limit text in any provenance",
     [small.csvH, small.xlsxH, small.bibH, small.j.filters].every(t => t.indexOf("paging limit") < 0));
   check("10 no Tip in any provenance", [small.csvH, small.xlsxH, small.bibH].every(t => t.indexOf(TIP) < 0));

@@ -663,16 +663,17 @@
   </div>
 
   <script>
-    // Year dropdowns init
+    // Year dropdowns init: up to the current year + 1, the same bound the backend accepts
     function initYears() {
+      const CURRENT_YEAR = new Date().getFullYear();
       let from = document.getElementById('fromYearSelect');
       let to = document.getElementById('toYearSelect');
-      for (let y = 1990; y <= 2026; y++) {
+      for (let y = 1990; y <= CURRENT_YEAR + 1; y++) {
         from.appendChild(new Option(y, y));
         to.appendChild(new Option(y, y));
       }
       from.value = 2014;
-      to.value = 2026;
+      to.value = CURRENT_YEAR;
     }
     initYears();
 
