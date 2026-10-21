@@ -408,6 +408,7 @@
     .badge-oa { background: rgba(34, 197, 94, 0.2); color: #86efac; }
     .badge-year { background: rgba(139, 92, 246, 0.2); color: #d8b4fe; }
     .badge-cite { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+    .badge-retracted { background: rgba(239, 68, 68, 0.25); color: #fca5a5; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .article-authors {
       font-size: 0.9rem;
       color: #cbd5e1;
@@ -896,7 +897,10 @@
         if(abs.length>300)abs=abs.slice(0,300)+"…";
         return {title:stripTags(r.title),authors:stripTags(r.authors),journal:stripTags(r.journal),
                 year:r.year,citations:r.citations,doi:r.doi,article_type:r.article_type,
-                is_oa:r.is_oa,abstract:abs};
+                is_oa:r.is_oa,abstract:abs,
+                // Text, not a boolean: the cell writers turn false into "" and
+                // true into "Yes", and the column must read true / false.
+                is_retracted:r.is_retracted===true?"true":"false"};
       });
     }
 
@@ -1032,6 +1036,7 @@
         if(doi)     lines.push("  url     = {https://doi.org/"+doi+"},");
         lines.push("  note    = {Exported from Praxvera; metadata via OpenAlex (CC0)}");
         lines.push("}");
+        if(r.is_retracted===true) lines.unshift("% OpenAlex marks this work as retracted");
         out.push(lines.join("\n"));
       });
       return out.join("\n\n")+"\n";
@@ -1042,7 +1047,7 @@
       // BibTeX needs the full author list, so shape rows here (not shapeRows).
       const rows=exportRows(key).rows.map(r=>({title:stripTags(r.title),
         authors:stripTags(r.authors),authors_full:r.authors_full,
-        journal:stripTags(r.journal),year:r.year,doi:r.doi}));
+        journal:stripTags(r.journal),year:r.year,doi:r.doi,is_retracted:r.is_retracted}));
       const papers=rows.filter(r=>r&&(r.title||r.display_name));
       if(!papers.length){alert("Run an analysis first — or clear the filters, nothing is visible.");return;}
       triggerDownload(new Blob(["% "+exportHeader(key,papers)+"\n\n"+toBibTeX(papers)],
@@ -1237,6 +1242,8 @@
 
       articles.forEach((a, idx) => {
         let oaBadge = a.is_oa ? '<span class="badge badge-oa">Open Access</span>' : '';
+        // Only a true flag gets a badge; false or missing says nothing.
+        let retractedBadge = a.is_retracted === true ? '<span class="badge badge-retracted">OpenAlex marks this work as retracted</span>' : '';
         let citeBar = maxCites > 0 ? Math.ceil((a.citations / maxCites) * 100) : 0;
         let abstracts = a.abstract || '';
         let showMore = abstracts.length > 200;
@@ -1257,6 +1264,7 @@
             <span class="badge badge-year">${a.year}</span>
             <span class="badge badge-cite">📊 ${a.citations} citations</span>
             ${oaBadge}
+            ${retractedBadge}
           </div>
           <div class="article-authors">${esc(a.authors)}</div>
           <div class="article-abstract collapsed">
@@ -1531,7 +1539,9 @@
         lastData.search = data.articles.map(a => ({
           title: a.title, authors: a.authors, authors_full: a.authors_full,
           journal: a.journal, article_type: a.article_type, year: a.year,
-          citations: a.citations, doi: a.doi, url: a.url, is_oa: a.is_oa, abstract: a.abstract
+          citations: a.citations, doi: a.doi, url: a.url, is_oa: a.is_oa, abstract: a.abstract,
+          // OpenAlex's own flag, kept on the row so filter/sort/paging cannot detach it.
+          is_retracted: a.is_retracted === true
         }));
 
         refreshView();
