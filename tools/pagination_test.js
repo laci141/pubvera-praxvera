@@ -22,6 +22,9 @@ if (start < 0 || end < 0 || end <= start) {
 }
 const section = html.slice(start, end);
 
+// The default To Year, computed as the page computes it (index.html initYears).
+const CY = new Date().getFullYear();
+
 let failed = 0;
 function check(label, ok) {
   if (!ok) failed++;
@@ -73,7 +76,7 @@ async function render(total, perPage) {
   fakeTotal = total;
   byId("queryInput").value = "";
   byId("fromYearSelect").value = "2014";
-  byId("toYearSelect").value = "2026";
+  byId("toYearSelect").value = String(CY);
   byId("perPageSlider").value = String(perPage);
   byId("sortSelect").value = "cited";
   await run("doSearch()");
