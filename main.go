@@ -360,7 +360,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	if req.FromYear > 0 && req.ToYear > 0 {
 		filters = append(filters, fmt.Sprintf("publication_year:%d-%d", req.FromYear, req.ToYear))
 	} else if req.FromYear > 0 {
-		filters = append(filters, fmt.Sprintf("publication_year:%d", req.FromYear))
+		// One set year is an open range: from that year onwards.
+		filters = append(filters, fmt.Sprintf("publication_year:>%d", req.FromYear-1))
+	} else if req.ToYear > 0 {
+		// Up to and including to_year.
+		filters = append(filters, fmt.Sprintf("publication_year:<%d", req.ToYear+1))
 	}
 	if query := cleanSearchQuery(req.Query); query != "" {
 		filters = append(filters, "title_and_abstract.search:"+query)

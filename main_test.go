@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -623,6 +624,61 @@ func TestSearchYearRangeValidation(t *testing.T) {
 			}
 			if tt.wantInBody != "" && !strings.Contains(rec.Body.String(), tt.wantInBody) {
 				t.Errorf("body = %q, want it to mention %q", rec.Body.String(), tt.wantInBody)
+			}
+		})
+	}
+}
+
+// TestSearchYearFilterOpenRange pins the publication_year filter for every
+// combination of set and unset years: a single set year is an open range, not
+// a single year and not "no filter". Both the filter that reaches OpenAlex and
+// the openalex_query provenance field are checked.
+func TestSearchYearFilterOpenRange(t *testing.T) {
+	issn := "primary_location.source.issn:" + nejmISSN
+	term := "title_and_abstract.search:x"
+	tests := []struct {
+		name       string
+		from, to   int
+		wantFilter string
+	}{
+		{name: "a: no years gives no year filter", from: 0, to: 0, wantFilter: issn + "," + term},
+		{name: "b: only from_year is from that year onwards", from: 2020, to: 0, wantFilter: issn + ",publication_year:>2019," + term},
+		{name: "c: only to_year is up to that year", from: 0, to: 2024, wantFilter: issn + ",publication_year:<2025," + term},
+		{name: "d: both years give a closed range", from: 2020, to: 2024, wantFilter: issn + ",publication_year:2020-2024," + term},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var upstreamFilter string
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamFilter = r.URL.Query().Get("filter")
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"results":[],"meta":{"count":0}}`))
+			}))
+			defer fake.Close()
+			t.Setenv("OPENALEX_BASE", fake.URL)
+
+			body := fmt.Sprintf(`{"query":"x","from_year":%d,"to_year":%d}`, tt.from, tt.to)
+			rec := httptest.NewRecorder()
+			handleSearch(rec, httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(body)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+			}
+			if upstreamFilter != tt.wantFilter {
+				t.Errorf("upstream filter = %q, want %q", upstreamFilter, tt.wantFilter)
+			}
+			var out struct {
+				OpenAlexQuery string `json:"openalex_query"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			prov, err := url.ParseQuery(out.OpenAlexQuery)
+			if err != nil {
+				t.Fatalf("parse openalex_query %q: %v", out.OpenAlexQuery, err)
+			}
+			if got := prov.Get("filter"); got != tt.wantFilter {
+				t.Errorf("openalex_query filter = %q, want %q", got, tt.wantFilter)
 			}
 		})
 	}
