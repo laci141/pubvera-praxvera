@@ -914,6 +914,9 @@
         if(v===null||v===undefined||v===false)return "";
         if(v===true)return "Yes";
         let s=(typeof v==="object")?JSON.stringify(v):String(v);
+        // A spreadsheet would run a cell starting with = + - @ (or a full-width
+        // twin, after blanks) as a formula; numbers and strictly numeric strings stay.
+        if(typeof v!=="number"&&!/^-?\d+(\.\d+)?$/.test(s)&&/^[ \t\r\n]*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]|^[\t\r]/.test(s)) s="'"+s;
         if(/[",\r\n]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
         return s;
       };
