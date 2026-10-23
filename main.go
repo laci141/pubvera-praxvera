@@ -121,6 +121,9 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey})
 	case "/":
+		// Revalidate on every load so a deploy is visible immediately;
+		// http.ServeFile answers If-Modified-Since with 304, which keeps it cheap.
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, "index.html")
 	default:
 		http.NotFound(w, r)
