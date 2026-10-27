@@ -84,14 +84,9 @@ func main() {
 		log.Print("WARNING: OPENALEX_API_KEY not set — using the lower anonymous OpenAlex budget")
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/search", handleSearch)
-	mux.HandleFunc("/healthz", handleHealthz)
-	mux.HandleFunc("/", handleRoot)
-
 	srv := &http.Server{
 		Addr:              "0.0.0.0:" + port,
-		Handler:           mux,
+		Handler:           newMux(),
 		ReadHeaderTimeout: srvReadHeaderTimeout,
 		ReadTimeout:       srvReadTimeout,
 		WriteTimeout:      srvWriteTimeout,
@@ -102,6 +97,18 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// newMux is the route table main() serves; the tests drive the same one.
+func newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/search", handleSearch)
+	mux.HandleFunc("/healthz", handleHealthz)
+	mux.HandleFunc("/", handleRoot)
+	// Not under /api/, like /healthz: Caddy's forward_auth covers /api/*, the
+	// footer reads this before sign-in, and it carries only the build version.
+	mux.HandleFunc("/version", handleVersion)
+	return mux
 }
 
 type browserConfig struct {
