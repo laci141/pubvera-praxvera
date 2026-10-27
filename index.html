@@ -655,6 +655,7 @@
 
   <div class="footer">
     Data: OpenAlex (open scholarly metadata). Abstracts from OpenAlex. Not medical advice.
+    <span id="app-version"></span>
   </div>
 
   <div class="disclaimer">
@@ -1691,6 +1692,18 @@
     }
 
     initAuth().catch(() => { /* stay in unauthenticated mode */ });
+  </script>
+  <script>
+    (function () {
+      fetch('/version', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((d) => {
+          if (d && typeof d.version === 'string' && d.version) {
+            document.getElementById('app-version').textContent = 'Praxvera v' + d.version;
+          }
+        })
+        .catch(() => { /* leave the footer without a version */ });
+    })();
   </script>
 </body>
 </html>
