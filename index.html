@@ -610,9 +610,9 @@
       <h1>🔬 Praxvera</h1>
       <p>Search 190,000+ clinical research articles from 1990 to today. Full abstracts, citations, all legal via OpenAlex.</p>
       <div class="hero-chips">
-        <div class="chip" onclick="prefill('cancer', 2014, 2014)">CAR-T 2014</div>
-        <div class="chip" onclick="prefill('glioblastoma', 2005, 2005)">Glioblastoma 2005</div>
-        <div class="chip" onclick="prefill('covid', 2020, 2020)">COVID 2020</div>
+        <div class="chip" data-action="prefill" data-q="cancer" data-from="2014" data-to="2014">CAR-T 2014</div>
+        <div class="chip" data-action="prefill" data-q="glioblastoma" data-from="2005" data-to="2005">Glioblastoma 2005</div>
+        <div class="chip" data-action="prefill" data-q="covid" data-from="2020" data-to="2020">COVID 2020</div>
       </div>
     </div>
 
@@ -646,9 +646,9 @@
           <label>Results per page</label>
           <span id="perPageVal">20</span>
         </div>
-        <input type="range" id="perPageSlider" min="5" max="100" value="20" oninput="document.getElementById('perPageVal').textContent = this.value" />
+        <input type="range" id="perPageSlider" min="5" max="100" value="20" />
       </div>
-      <button class="search-btn" id="searchBtn" onclick="doSearch()">Search archive</button>
+      <button class="search-btn" id="searchBtn" data-action="doSearch">Search archive</button>
       <div id="resultArea"></div>
     </div>
   </div>
@@ -1152,7 +1152,7 @@
         '" data-file="'+name+'"'+(title?' title="'+title+'"':'')+'>'+label+'</button>';
       return '<div class="meta-row"><span class="meta">'+text+'<span class="qcount"></span></span>'+
         '<span class="dl-group">'+
-        '<select class="qsort" id="typeFilter" title="Filter by article type" onchange="applyTypeFilter()">'+
+        '<select class="qsort" id="typeFilter" title="Filter by article type" data-action="applyTypeFilter">'+
         '<option value="all">All types</option>'+
         '<option value="article">Article</option>'+
         '<option value="review">Review</option>'+
@@ -1160,7 +1160,7 @@
         '<option value="letter">Letter</option>'+
         '<option value="other">Other</option>'+
         '</select>'+
-        '<select class="qsort" id="sortResults" title="Sort results" onchange="applySort()">'+
+        '<select class="qsort" id="sortResults" title="Sort results" data-action="applySort">'+
         '<option value="cite_desc">Citations (high→low)</option>'+
         '<option value="cite_asc">Citations (low→high)</option>'+
         '<option value="year_desc">Year (newest→oldest)</option>'+
@@ -1273,11 +1273,11 @@
           <div class="article-authors">${esc(a.authors)}</div>
           <div class="article-abstract collapsed">
             ${highlight(safeRich(shortAbs), lastQuery)}
-            ${showMore ? `<button class="expand-btn" onclick="expandAbs(this)">...read more</button>` : ''}
+            ${showMore ? `<button class="expand-btn" data-action="expandAbs">...read more</button>` : ''}
           </div>
           <div class="card-actions">
             ${linkHtml}
-            <button class="cite-btn" onclick="copyBibtex(${idx}, this)">📋 Cite</button>
+            <button class="cite-btn" data-action="copyBibtex" data-idx="${idx}">📋 Cite</button>
           </div>
           <div class="cite-bar-container">
             <div class="cite-bar" style="width: ${citeBar}%"></div>
@@ -1289,9 +1289,9 @@
 
       // Pager (server-side pagination over the full result set)
       html += `<div class="pager">
-        <button class="dl" onclick="pageNav(-1)" ${currentPage <= 1 ? 'disabled' : ''}>← Previous</button>
+        <button class="dl" data-action="pageNav" data-dir="-1" ${currentPage <= 1 ? 'disabled' : ''}>← Previous</button>
         <span class="pager-info">Page ${currentPage} of ${totalPages}</span>
-        <button class="dl" onclick="pageNav(1)" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+        <button class="dl" data-action="pageNav" data-dir="1" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
       </div>` + pagerNote(lastTotal);
       resultDiv.innerHTML = html;
 
@@ -1422,7 +1422,8 @@
     }
 
     // Bridge to the module script at the end of this file: the sign-in button
-    // inside a 401 error card is inline HTML, so it needs a global to call.
+    // inside a 401 error card is built HTML (data-action="pubveraSignIn"), so
+    // the delegated click listener needs a global to call.
     function pubveraSignIn() {
       if (window.pubveraAuth) window.pubveraAuth.signIn();
     }
@@ -1452,7 +1453,7 @@
         // The raw error ("missing/invalid token") tells the user nothing they
         // can act on, and the remedy is always the same, so it is not shown.
         let btn = (window.pubveraAuth && window.pubveraAuth.enabled)
-          ? '<button type="button" class="search-btn" onclick="pubveraSignIn()">Sign in with Google</button>'
+          ? '<button type="button" class="search-btn" data-action="pubveraSignIn">Sign in with Google</button>'
           : '';
         return '<div class="errcard"><h4>Sign-in required</h4>' +
           '<p>Please sign in to run this search.</p>' + btn + '</div>';
@@ -1598,6 +1599,32 @@
         setTimeout(() => { btn.textContent = '📋 Cite'; }, 1500);
       });
     }
+
+    // ── Delegated data-action listeners (CSP phase 0) ──
+    // A CSP with script-src-attr 'none' blocks inline on*= handlers, also the
+    // ones inserted through innerHTML, so the static markup and the built HTML
+    // carry data-action instead: one delegated listener per event on document
+    // covers the chips, the search button, Read more, Cite, the pager, the 401
+    // sign-in button, the toolbar selects and the per-page slider readout.
+    document.addEventListener('click', e => {
+      const b = e.target.closest ? e.target.closest('[data-action]') : null;
+      if (!b) return;
+      const a = b.dataset.action;
+      if (a === 'prefill') prefill(b.dataset.q, Number(b.dataset.from), Number(b.dataset.to));
+      else if (a === 'doSearch') doSearch();
+      else if (a === 'expandAbs') expandAbs(b);
+      else if (a === 'copyBibtex') copyBibtex(Number(b.dataset.idx), b);
+      else if (a === 'pageNav') pageNav(Number(b.dataset.dir));
+      else if (a === 'pubveraSignIn') pubveraSignIn();
+    });
+    document.addEventListener('change', e => {
+      const a = e.target.dataset && e.target.dataset.action;
+      if (a === 'applyTypeFilter') applyTypeFilter();
+      else if (a === 'applySort') applySort();
+    });
+    document.addEventListener('input', e => {
+      if (e.target.id === 'perPageSlider') document.getElementById('perPageVal').textContent = e.target.value;
+    });
   </script>
 
   <!-- GOOGLE SIGN-IN (Supabase).
