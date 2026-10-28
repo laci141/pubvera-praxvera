@@ -168,7 +168,14 @@
       gap: 10px;
       flex-wrap: wrap;
     }
+    /* The chips are <button>s: font: inherit (before font-size, which it would
+       reset) and appearance: none undo the browser's button defaults, so they
+       look like the old <div> chips. */
     .chip {
+      font: inherit;
+      margin: 0;
+      -webkit-appearance: none;
+      appearance: none;
       padding: 8px 16px;
       background: rgba(59, 130, 246, 0.15);
       border: 1px solid rgba(59, 130, 246, 0.4);
@@ -181,6 +188,10 @@
     .chip:hover {
       background: rgba(59, 130, 246, 0.25);
       border-color: rgba(59, 130, 246, 0.6);
+    }
+    .chip:focus-visible {
+      outline: 2px solid #fff;
+      outline-offset: 2px;
     }
     .search-panel {
       background: rgba(255, 255, 255, 0.05);
@@ -610,9 +621,9 @@
       <h1>🔬 Praxvera</h1>
       <p>Search 190,000+ clinical research articles from 1990 to today. Full abstracts, citations, all legal via OpenAlex.</p>
       <div class="hero-chips">
-        <div class="chip" data-action="prefill" data-q="cancer" data-from="2014" data-to="2014">CAR-T 2014</div>
-        <div class="chip" data-action="prefill" data-q="glioblastoma" data-from="2005" data-to="2005">Glioblastoma 2005</div>
-        <div class="chip" data-action="prefill" data-q="covid" data-from="2020" data-to="2020">COVID 2020</div>
+        <button type="button" class="chip" data-action="prefill" data-q="cancer" data-from="2014" data-to="2014">CAR-T 2014</button>
+        <button type="button" class="chip" data-action="prefill" data-q="glioblastoma" data-from="2005" data-to="2005">Glioblastoma 2005</button>
+        <button type="button" class="chip" data-action="prefill" data-q="covid" data-from="2020" data-to="2020">COVID 2020</button>
       </div>
     </div>
 

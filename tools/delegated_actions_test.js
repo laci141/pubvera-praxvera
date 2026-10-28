@@ -13,7 +13,10 @@
 //   T4 the delegated block is cut out of index.html and driven in a vm sandbox
 //      with fake elements whose data-* attributes are read from the real
 //      markup; prefill, expandAbs and pubveraSignIn are the real functions,
-//      the rest are spies.
+//      the rest are spies;
+//   A  the three example chips are native <button type="button"> elements with
+//      font: inherit and a :focus-visible outline, none taken out of the tab
+//      order.
 // A listener block or markup tag that cannot be found is a FAIL, never a
 // silent pass.
 "use strict";
@@ -81,7 +84,7 @@ function dataset(tag) {
     ds[m[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = m[2];
   return ds;
 }
-const chips = tags(/<div class="chip"[^>]*>([^<]*)<\/div>/g);
+const chips = tags(/<button type="button" class="chip"[^>]*>([^<]*)<\/button>/g);
 const searchBtn = tags(/<button[^>]*id="searchBtn"[^>]*>/g);
 const typeSel = tags(/<select[^>]*id="typeFilter"[^>]*>/g);
 const sortSel = tags(/<select[^>]*id="sortResults"[^>]*>/g);
@@ -231,6 +234,21 @@ tcase("input on another field (.qfilter) leaves #perPageVal alone", h => {
   h.fire("input", { target: { id: "", className: "qfilter", value: "zzz", dataset: {} } });
   return h.els.perPageVal.textContent === "20" && same(h.calls, []);
 });
+
+// ── A: the chips are reachable and operable from the keyboard ──
+// Any static tag whose class list holds the token "chip" (not hero-chips).
+const chipTags = tags(/<([a-z][a-z0-9]*)\b[^>]*\sclass\s*=\s*"([^"]*)"[^>]*>/g)
+  .filter(m => m[2].split(/\s+/).includes("chip"));
+const notButton = chipTags.filter(m => m[1] !== "button" || !/\stype\s*=\s*"button"/.test(m[0]));
+check("A1 every class=\"chip\" element is a <button type=\"button\"> (found " + chipTags.length +
+  ", not: " + (notButton.map(m => "L" + lineOf(m.index) + " <" + m[1]).join(", ") || "none") + ")",
+  chipTags.length === 3 && notButton.length === 0);
+const chipRule = /^\s*\.chip\s*\{([^}]*)\}/m.exec(html);
+check("A2 the .chip rule sets font: inherit", !!chipRule && /(^|[;{\s])font\s*:\s*inherit\s*(;|$)/m.test(chipRule[1]));
+check("A2 a .chip:focus-visible rule draws an outline",
+  /^\s*\.chip:focus-visible\s*\{[^}]*\boutline\s*:\s*[^;}]*solid/m.test(html));
+const untabbable = chipTags.filter(m => /\stabindex\s*=\s*"-1"/.test(m[0]));
+check("A3 no chip has tabindex=\"-1\" (found " + untabbable.length + ")", untabbable.length === 0);
 
 if (ran === 0) {
   console.error("FAIL: zero checks ran - refusing to pass silently");
