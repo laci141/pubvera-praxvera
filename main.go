@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -128,13 +131,41 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey})
 	case "/":
-		// Revalidate on every load so a deploy is visible immediately;
-		// http.ServeFile answers If-Modified-Since with 304, which keeps it cheap.
-		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, "index.html")
+		serveIndex(w)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// serveIndex writes index.html with a fresh CSP nonce in place of every
+// nonceMarker. no-store and no Last-Modified: a 304 would keep the old page,
+// and its old nonce, under the new header nonce. A read error answers what
+// http.ServeFile answered before, without the policy.
+func serveIndex(w http.ResponseWriter) {
+	data, err := os.ReadFile("index.html")
+	if err != nil {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			http.Error(w, "404 page not found", http.StatusNotFound)
+		case errors.Is(err, fs.ErrPermission):
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+		default:
+			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
+		}
+		return
+	}
+	b := make([]byte, 16)
+	if _, err := nonceRandRead(b); err != nil {
+		log.Printf("csp nonce: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	nonce := base64.RawStdEncoding.EncodeToString(b)
+	data = bytes.ReplaceAll(data, []byte(nonceMarker), []byte(nonce))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce))
+	w.Write(data)
 }
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
