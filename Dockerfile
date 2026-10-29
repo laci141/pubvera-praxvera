@@ -1,7 +1,7 @@
 FROM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS web-builder
 WORKDIR /build
 COPY go.mod ./
-COPY main.go version.go index.html ./
+COPY main.go version.go csp.go index.html ./
 # The CalVer version from the release workflow; "dev" for any other build.
 # -X names the variable main.appVersion: for package main the linker uses
 # "main", not the module path. The target is the package (.), not ./main.go:
