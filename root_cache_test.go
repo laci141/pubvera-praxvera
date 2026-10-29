@@ -3,15 +3,19 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-// The index page must be revalidated on every load, so a deploy is visible
-// immediately instead of whenever a browser's heuristic cache expires. Without
-// a Cache-Control header neither Caddy nor Cloudflare adds one, and browsers
-// fall back to heuristic freshness from Last-Modified. no-cache (not no-store)
-// keeps the 304 path, so a revalidation stays cheap. main() registers
-// handleRoot for "/" on the mux, so the tests drive handleRoot directly.
+// The index page must never be stored, so a deploy is visible on the next load
+// instead of whenever a browser's heuristic cache expires, and a cached copy
+// cannot replay one CSP nonce to every visitor. Each response carries a fresh
+// nonce in both the header and the body, so a 304 must never happen: the
+// browser would keep the old page (old nonce) under the new header nonce and
+// every script would be blocked once the policy enforces. no-store and no
+// Last-Modified give a browser nothing to revalidate with. main() serves
+// newMux(), which registers handleRoot for "/", so the tests drive handleRoot
+// directly.
 
 func getRoot(t *testing.T, h http.Handler, path, ifModifiedSince string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -31,20 +35,29 @@ func TestIndexIsRevalidatedOnEveryLoad(t *testing.T) {
 	if first.Code != http.StatusOK {
 		t.Fatalf("GET /: status = %d, want 200", first.Code)
 	}
-	if cc := first.Header().Get("Cache-Control"); cc != "no-cache" {
-		t.Errorf("GET /: Cache-Control = %q, want %q", cc, "no-cache")
+	if cc := first.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("GET /: Cache-Control = %q, want %q", cc, "no-store")
+	}
+	if lm := first.Header().Get("Last-Modified"); lm != "" {
+		t.Errorf("GET /: Last-Modified = %q, want none", lm)
 	}
 
-	lastMod := first.Header().Get("Last-Modified")
-	if lastMod == "" {
-		t.Fatalf("GET /: no Last-Modified header, so a revalidation cannot be tested")
+	// A date in the future is newer than any index.html, so a handler that
+	// honours If-Modified-Since would answer 304 here.
+	second := getRoot(t, mux, "/", "Fri, 01 Jan 2100 00:00:00 GMT")
+	if second.Code != http.StatusOK {
+		t.Fatalf("GET / with If-Modified-Since: status = %d, want 200, never 304", second.Code)
 	}
-	second := getRoot(t, mux, "/", lastMod)
-	if second.Code != http.StatusNotModified {
-		t.Errorf("GET / with If-Modified-Since: status = %d, want 304", second.Code)
+	if cc := second.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("GET / with If-Modified-Since: Cache-Control = %q, want %q", cc, "no-store")
 	}
-	if cc := second.Header().Get("Cache-Control"); cc != "no-cache" {
-		t.Errorf("GET / with If-Modified-Since: Cache-Control = %q, want %q", cc, "no-cache")
+	if body := second.Body.String(); !strings.Contains(body, "</html>") {
+		t.Errorf("GET / with If-Modified-Since: body is %d bytes without </html>, want the full page", len(body))
+	}
+	a := first.Header().Get(reportOnlyHeader)
+	b := second.Header().Get(reportOnlyHeader)
+	if a == "" || a == b {
+		t.Errorf("GET / with If-Modified-Since: %s = %q after %q, want a fresh nonce", reportOnlyHeader, b, a)
 	}
 }
 
