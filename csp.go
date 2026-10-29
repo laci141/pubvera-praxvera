@@ -8,7 +8,7 @@ import "crypto/rand"
 // nothing is blocked yet; phase 2 changes only cspHeaderName.
 const (
 	nonceMarker   = "__CSP_NONCE__"
-	cspHeaderName = "Content-Security-Policy-Report-Only"
+	cspHeaderName = "Content-Security-Policy"
 )
 
 // nonceRandRead is the random source for the CSP nonce. It is a variable only

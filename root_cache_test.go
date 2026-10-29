@@ -54,10 +54,10 @@ func TestIndexIsRevalidatedOnEveryLoad(t *testing.T) {
 	if body := second.Body.String(); !strings.Contains(body, "</html>") {
 		t.Errorf("GET / with If-Modified-Since: body is %d bytes without </html>, want the full page", len(body))
 	}
-	a := first.Header().Get(reportOnlyHeader)
-	b := second.Header().Get(reportOnlyHeader)
+	a := first.Header().Get(enforcingHeader)
+	b := second.Header().Get(enforcingHeader)
 	if a == "" || a == b {
-		t.Errorf("GET / with If-Modified-Since: %s = %q after %q, want a fresh nonce", reportOnlyHeader, b, a)
+		t.Errorf("GET / with If-Modified-Since: %s = %q after %q, want a fresh nonce", enforcingHeader, b, a)
 	}
 }
 

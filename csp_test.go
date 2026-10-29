@@ -48,10 +48,10 @@ func indexNonce(t *testing.T) (string, string, http.Header) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /: status = %d, want 200", rec.Code)
 	}
-	csp := rec.Header().Get(reportOnlyHeader)
+	csp := rec.Header().Get(enforcingHeader)
 	m := cspNonceRE.FindStringSubmatch(csp)
 	if m == nil {
-		t.Fatalf("GET /: %s = %q, want a policy with a 22-character nonce", reportOnlyHeader, csp)
+		t.Fatalf("GET /: %s = %q, want a policy with a 22-character nonce", enforcingHeader, csp)
 	}
 	return m[1], rec.Body.String(), rec.Header()
 }
@@ -94,11 +94,11 @@ func TestCSPHeaderNonceMatchesEveryBodyNonce(t *testing.T) {
 
 func TestCSPHeaderIsReportOnlyWithExactPolicy(t *testing.T) {
 	nonce, _, h := indexNonce(t)
-	if got := h.Get(reportOnlyHeader); got != wantPolicy(nonce) {
-		t.Errorf("%s = %q, want %q", reportOnlyHeader, got, wantPolicy(nonce))
+	if got := h.Get(enforcingHeader); got != wantPolicy(nonce) {
+		t.Errorf("%s = %q, want %q", enforcingHeader, got, wantPolicy(nonce))
 	}
-	if cspHeaderName != reportOnlyHeader {
-		t.Errorf("cspHeaderName = %q, want %q", cspHeaderName, reportOnlyHeader)
+	if cspHeaderName != enforcingHeader {
+		t.Errorf("cspHeaderName = %q, want %q", cspHeaderName, enforcingHeader)
 	}
 }
 
@@ -106,11 +106,11 @@ func TestCSPHeaderIsReportOnlyWithExactPolicy(t *testing.T) {
 // missing Report-Only header does not hide the enforcing-header check.
 func TestCSPIndexSendsOnlyTheReportOnlyHeader(t *testing.T) {
 	rec := getRoot(t, http.HandlerFunc(handleRoot), "/", "")
-	if got := rec.Header().Get(reportOnlyHeader); got == "" {
-		t.Errorf("GET /: %s = %q, want a policy", reportOnlyHeader, got)
+	if got := rec.Header().Get(enforcingHeader); got == "" {
+		t.Errorf("GET /: %s = %q, want a policy", enforcingHeader, got)
 	}
-	if got := rec.Header().Get(enforcingHeader); got != "" {
-		t.Errorf("GET /: %s = %q, want none: phase 1 blocks nothing", enforcingHeader, got)
+	if got := rec.Header().Get(reportOnlyHeader); got != "" {
+		t.Errorf("GET /: %s = %q, want none: phase 2 enforces", reportOnlyHeader, got)
 	}
 }
 
