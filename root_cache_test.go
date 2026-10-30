@@ -28,7 +28,7 @@ func getRoot(t *testing.T, h http.Handler, path, ifModifiedSince string) *httpte
 	return rec
 }
 
-func TestIndexIsRevalidatedOnEveryLoad(t *testing.T) {
+func TestIndexIsNeverStored(t *testing.T) {
 	mux := http.HandlerFunc(handleRoot)
 
 	first := getRoot(t, mux, "/", "")
