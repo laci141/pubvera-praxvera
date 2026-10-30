@@ -2,10 +2,10 @@ package main
 
 import "crypto/rand"
 
-// Content-Security-Policy, phase 1: every <script> tag in index.html
+// Content-Security-Policy, phase 2: every <script> tag in index.html
 // carries nonce="__CSP_NONCE__", and each index response replaces that marker
-// with a fresh nonce named in the policy header. The header is Report-Only, so
-// nothing is blocked yet; phase 2 changes only cspHeaderName.
+// with a fresh per-response nonce named in the policy header. The header is the
+// enforcing Content-Security-Policy, so a violation blocks the resource.
 const (
 	nonceMarker   = "__CSP_NONCE__"
 	cspHeaderName = "Content-Security-Policy"
