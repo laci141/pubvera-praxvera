@@ -586,6 +586,10 @@
       .auth-btn { font-size: 0.7rem; padding: 0.25rem 0.6rem; }
       .container { padding: 28px 20px 20px; }
     }
+    /* CSP style-src-attr 'none' blocks inline style attributes; classes replace
+       them; the cite bar width is set through CSSOM, which the policy allows. */
+    .u-mb16.u-mb16 { margin-bottom: 16px; }
+    .pager-info-note.pager-info-note { white-space:normal;text-align:center;margin-top:10px; }
   </style>
 </head>
 <body>
@@ -629,7 +633,7 @@
 
     <div class="search-panel">
       <h2>Search the archive</h2>
-      <div class="form-group" style="margin-bottom: 16px;">
+      <div class="form-group u-mb16">
         <label>Keyword</label>
         <input type="text" id="queryInput" placeholder="e.g., cancer, sepsis, vaccine..." />
       </div>
@@ -1215,7 +1219,20 @@
       let link = urls
         ? ` <a href="${escAttr(urls.web)}" target="_blank" rel="noopener noreferrer">Open the full result set on OpenAlex</a>`
         : '';
-      return '<div class="pager-info" style="white-space:normal;text-align:center;margin-top:10px">OpenAlex allows paging through the first 10,000 results. Refine the search to see more.' + link + '</div>';
+      return '<div class="pager-info pager-info-note">OpenAlex allows paging through the first 10,000 results. Refine the search to see more.' + link + '</div>';
+    }
+
+    // Cite bar widths: the markup carries data-cite-width and the width is set
+    // through CSSOM here, because a style attribute would be blocked by CSP.
+    // A value that is not a finite number sets no width, as the old
+    // "width: NaN%" style was ignored by the browser. No clamp: the old style
+    // attribute applied the number as is. Queried through document, like
+    // applyFilter, scoped to the container the cards were inserted into.
+    function applyCiteWidths() {
+      document.querySelectorAll('#resultArea .cite-bar[data-cite-width]').forEach(el => {
+        let n = Number(el.getAttribute('data-cite-width'));
+        if (Number.isFinite(n)) el.style.width = n + '%';
+      });
     }
 
     // Renders the card list plus its toolbar. Used both by the initial search
@@ -1291,7 +1308,7 @@
             <button class="cite-btn" data-action="copyBibtex" data-idx="${idx}">📋 Cite</button>
           </div>
           <div class="cite-bar-container">
-            <div class="cite-bar" style="width: ${citeBar}%"></div>
+            <div class="cite-bar" data-cite-width="${citeBar}"></div>
           </div>
         </div>`;
       });
@@ -1305,6 +1322,7 @@
         <button class="dl" data-action="pageNav" data-dir="1" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
       </div>` + pagerNote(lastTotal);
       resultDiv.innerHTML = html;
+      applyCiteWidths();
 
       // Restore toolbar state across re-renders.
       let sortEl = document.getElementById('sortResults');
