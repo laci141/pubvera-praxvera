@@ -175,7 +175,7 @@ check("E9 each item calls its exporter once, closes the menu and returns focus t
   okDl && want.every(w => got.includes(w)));
 
 // CSS: classes used by the markup exist; panel colour, position, touch targets.
-// With or without a nonce attribute (CSP style S1): the block starts after the opening tag.
+// With or without a nonce attribute (CSP style S1/S2): the block starts after the opening tag.
 const styleOpen = /<style\b[^>]*>/.exec(src);
 const style = src.slice(styleOpen ? styleOpen.index + styleOpen[0].length : -1, src.indexOf("</style>")).replace(/\/\*[^]*?\*\//g, "");
 const rules = [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]

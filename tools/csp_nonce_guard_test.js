@@ -9,7 +9,7 @@
 //   G2 no on*=" built inside a JS string literal in any inline script;
 //   G3 every <script tag carries nonce="__CSP_NONCE__" (index.html has 4:
 //      the xlsx-js-style bundle, two classic inline scripts and one module);
-//   G4 every <style tag carries the marker too (style S1; index.html has 1);
+//   G4 every <style tag carries the marker too (style S1/S2; index.html has 1);
 //   G5 the marker appears exactly 5 times (4 scripts + 1 style).
 "use strict";
 const fs = require("fs");
