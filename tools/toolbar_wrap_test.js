@@ -12,7 +12,9 @@ const path = require("path");
 const src = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8").replace(/\r\n/g, "\n");
 let fail = 0, total = 0;
 function check(name, ok) { total++; console.log((ok ? "PASS  " : "FAIL  ") + name); if (!ok) fail++; }
-const style = src.slice(src.indexOf("<style"), src.indexOf("</style>")).replace(/\/\*[^]*?\*\//g, "");
+// With or without a nonce attribute (CSP style S1): the block starts after the opening tag.
+const styleOpen = /<style\b[^>]*>/.exec(src);
+const style = src.slice(styleOpen ? styleOpen.index + styleOpen[0].length : -1, src.indexOf("</style>")).replace(/\/\*[^]*?\*\//g, "");
 
 // Bodies of every @media block whose head matches headRe (brace-matched), plus the CSS left without them.
 function mediaSplit(css, headRe) {
