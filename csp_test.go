@@ -13,8 +13,9 @@ import (
 // and each index response replaces that marker with a fresh nonce named in the
 // enforcing Content-Security-Policy header. Style S2: the one <style> tag
 // carries the same marker, and the style policy is part of that one enforcing
-// header; there is no Content-Security-Policy-Report-Only header. All requests go in-process
-// through getRoot (root_cache_test.go), on handleRoot or on newMux().
+// header. The only Content-Security-Policy-Report-Only header is connect-src
+// (csp_report.go). All requests go in-process through getRoot
+// (root_cache_test.go), on handleRoot or on newMux().
 
 // wantPolicy is written out here rather than taken from contentSecurityPolicy,
 // so a change to any directive in csp.go fails a test.
@@ -119,11 +120,14 @@ func TestCSPHeaderIsEnforcingWithExactPolicy(t *testing.T) {
 }
 
 // TestCSPIndexSendsOneEnforcingHeader replaces S1's TestCSPIndexSendsBothHeaders
-// on purpose: S1 required a Report-Only style header, S2 forbids it. It does not
-// use indexNonce, so a missing enforcing header fails here directly.
+// on purpose: S1 required a Report-Only style header, S2 forbids it. connect-src
+// PR A brings a Report-Only header back, for connect-src only: exactly the value
+// of reportOnlyConnectSrc for the test environment. It does not use indexNonce,
+// so a missing enforcing header fails here directly.
 // Header().Set keeps only the last value, so two Set calls on one name would
 // silently drop a policy; exactly one value, equal to the full policy, is required.
 func TestCSPIndexSendsOneEnforcingHeader(t *testing.T) {
+	_, _, origin := supabaseConfig()
 	rec := getRoot(t, http.HandlerFunc(handleRoot), "/", "")
 	enf := rec.Header().Values(enforcingHeader)
 	if len(enf) != 1 {
@@ -133,16 +137,19 @@ func TestCSPIndexSendsOneEnforcingHeader(t *testing.T) {
 	if m == nil || enf[0] != wantPolicy(m[1]) {
 		t.Errorf("GET /: %s = %q, want %q", enforcingHeader, enf[0], wantPolicy("<22-char nonce>"))
 	}
-	if n := len(rec.Header().Values(reportOnlyHeader)); n != 0 {
-		t.Errorf("GET /: %d %s headers %q, want none: style S2 is enforcing", n, reportOnlyHeader, rec.Header().Values(reportOnlyHeader))
+	if got := rec.Header().Values(reportOnlyHeader); len(got) != 1 || got[0] != reportOnlyConnectSrc(origin) {
+		t.Errorf("GET /: %s headers %q, want exactly [%q]", reportOnlyHeader, got, reportOnlyConnectSrc(origin))
 	}
 }
 
 // The enforcing header is pinned as a full literal through the real handler,
 // for the nonce that 16 zero bytes give, so a one-character change in csp.go
 // fails here. Style S2: the style directives sit after script-src-attr, in the
-// Recallis order, and no Report-Only header is sent.
+// Recallis order. connect-src PR A: the Report-Only header carries connect-src
+// alone, pinned here for an environment without Supabase.
 func TestCSPHeadersPinnedLiteral(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "")
 	orig := nonceRandRead
 	nonceRandRead = func(b []byte) (int, error) { clear(b); return len(b), nil }
 	defer func() { nonceRandRead = orig }()
@@ -151,8 +158,12 @@ func TestCSPHeadersPinnedLiteral(t *testing.T) {
 	if got := rec.Header().Get(enforcingHeader); got != wantEnf {
 		t.Errorf("GET /: %s = %q, want %q", enforcingHeader, got, wantEnf)
 	}
-	if got := rec.Header().Values(reportOnlyHeader); len(got) != 0 {
-		t.Errorf("GET /: %s = %q, want none", reportOnlyHeader, got)
+	const wantRO = "connect-src 'self'; report-to csp; report-uri /csp-report"
+	if got := rec.Header().Values(reportOnlyHeader); len(got) != 1 || got[0] != wantRO {
+		t.Errorf("GET /: %s = %q, want [%q]", reportOnlyHeader, got, wantRO)
+	}
+	if got, want := rec.Header().Get("Reporting-Endpoints"), `csp="/csp-report"`; got != want {
+		t.Errorf("GET /: Reporting-Endpoints = %q, want %q", got, want)
 	}
 }
 
