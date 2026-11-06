@@ -111,6 +111,10 @@ func newMux() *http.ServeMux {
 	// Not under /api/, like /healthz: Caddy's forward_auth covers /api/*, the
 	// footer reads this before sign-in, and it carries only the build version.
 	mux.HandleFunc("/version", handleVersion)
+	// The collector for Content-Security-Policy violation reports
+	// (csp_report.go). Not under /api/: the browser posts reports without the
+	// user's token.
+	mux.HandleFunc("/csp-report", handleCSPReport)
 	return mux
 }
 
@@ -122,11 +126,9 @@ type browserConfig struct {
 func handleRoot(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/config.json":
-		supaURL := strings.TrimSpace(os.Getenv("SUPABASE_URL"))
-		supaKey := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
-		if supaURL == "" || supaKey == "" {
-			supaURL, supaKey = "", ""
-		}
+		// supabaseConfig (csp_report.go) is also what the index response's
+		// connect-src uses, so the two cannot disagree.
+		supaURL, supaKey, _ := supabaseConfig()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey})
@@ -165,6 +167,11 @@ func serveIndex(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce))
+	// connect-src PR A: Report-Only, so nothing new is blocked; violations are
+	// reported to POST /csp-report (csp_report.go).
+	_, _, supaOrigin := supabaseConfig()
+	w.Header().Set("Content-Security-Policy-Report-Only", reportOnlyConnectSrc(supaOrigin))
+	w.Header().Set("Reporting-Endpoints", `csp="/csp-report"`)
 	w.Write(data)
 }
 
