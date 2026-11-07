@@ -8,8 +8,9 @@ import "crypto/rand"
 // one policy header. The header is the enforcing Content-Security-Policy for
 // scripts and styles alike, so a violation blocks the resource. Phase 1
 // (Report-Only) ran on the script policy and style S1 (Report-Only) on the
-// style policy before each was enforced. connect-src runs in Report-Only in a
-// separate header, set up in csp_report.go.
+// style policy before each was enforced. connect-src is enforced too (PR B,
+// after PR A ran it Report-Only): main.go appends cspConnectSrc
+// (csp_report.go) to this policy in the same header.
 const (
 	nonceMarker   = "__CSP_NONCE__"
 	cspHeaderName = "Content-Security-Policy"
