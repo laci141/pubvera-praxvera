@@ -13,8 +13,9 @@ import (
 // and each index response replaces that marker with a fresh nonce named in the
 // enforcing Content-Security-Policy header. Style S2: the one <style> tag
 // carries the same marker, and the style policy is part of that one enforcing
-// header. The only Content-Security-Policy-Report-Only header is connect-src
-// (csp_report.go). All requests go in-process through getRoot
+// header. connect-src PR B: connect-src is enforced too, appended to that same
+// header, and no response carries a Content-Security-Policy-Report-Only
+// header. All requests go in-process through getRoot
 // (root_cache_test.go), on handleRoot or on newMux().
 
 // wantPolicy is written out here rather than taken from contentSecurityPolicy,
@@ -22,6 +23,10 @@ import (
 func wantPolicy(nonce string) string {
 	return "script-src 'nonce-" + nonce + "' 'strict-dynamic' https: 'unsafe-inline'; script-src-attr 'none'; " + wantStylePolicy(nonce) + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 }
+
+// wantNoSupabaseTail is the connect-src tail of the enforcing header when no
+// Supabase origin is configured, written out for the same reason.
+const wantNoSupabaseTail = "; connect-src 'self'; report-to csp; report-uri /csp-report"
 
 // wantStylePolicy is the style part of the enforcing policy (S2), written out
 // for the same reason.
@@ -47,7 +52,7 @@ const wantStyleTags = 1
 var styleOpenRE = regexp.MustCompile(`<style\b[^>]*>`)
 
 // Both 22-character nonces of the enforcing policy: script-src and style-src.
-var bothNoncesRE = regexp.MustCompile(`^script-src 'nonce-([A-Za-z0-9+/]{22})' 'strict-dynamic' https: 'unsafe-inline'; script-src-attr 'none'; style-src 'nonce-([A-Za-z0-9+/]{22})'; style-src-attr 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'$`)
+var bothNoncesRE = regexp.MustCompile(`^script-src 'nonce-([A-Za-z0-9+/]{22})' 'strict-dynamic' https: 'unsafe-inline'; script-src-attr 'none'; style-src 'nonce-([A-Za-z0-9+/]{22})'; style-src-attr 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self'(?: https://[A-Za-z0-9.:-]+)?; report-to csp; report-uri /csp-report$`)
 
 // 16 random bytes in raw standard base64 are exactly 22 characters.
 var cspNonceRE = regexp.MustCompile(`^script-src 'nonce-([A-Za-z0-9+/]{22})' `)
@@ -110,9 +115,11 @@ func TestCSPHeaderNonceMatchesEveryBodyNonce(t *testing.T) {
 }
 
 func TestCSPHeaderIsEnforcingWithExactPolicy(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "")
 	nonce, _, h := indexNonce(t)
-	if got := h.Get(enforcingHeader); got != wantPolicy(nonce) {
-		t.Errorf("%s = %q, want %q", enforcingHeader, got, wantPolicy(nonce))
+	if got, want := h.Get(enforcingHeader), wantPolicy(nonce)+wantNoSupabaseTail; got != want {
+		t.Errorf("%s = %q, want %q", enforcingHeader, got, want)
 	}
 	if cspHeaderName != enforcingHeader {
 		t.Errorf("cspHeaderName = %q, want %q", cspHeaderName, enforcingHeader)
@@ -121,32 +128,36 @@ func TestCSPHeaderIsEnforcingWithExactPolicy(t *testing.T) {
 
 // TestCSPIndexSendsOneEnforcingHeader replaces S1's TestCSPIndexSendsBothHeaders
 // on purpose: S1 required a Report-Only style header, S2 forbids it. connect-src
-// PR A brings a Report-Only header back, for connect-src only: exactly the value
-// of reportOnlyConnectSrc for the test environment. It does not use indexNonce,
-// so a missing enforcing header fails here directly.
-// Header().Set keeps only the last value, so two Set calls on one name would
-// silently drop a policy; exactly one value, equal to the full policy, is required.
+// PR A brought a Report-Only header back for connect-src; PR B enforces
+// connect-src inside the one header and forbids the Report-Only header again.
+// It does not use indexNonce, so a missing enforcing header fails here
+// directly. Header().Set keeps only the last value, so two Set calls on one
+// name would silently drop a policy; exactly one value, equal to the full
+// policy, is required.
 func TestCSPIndexSendsOneEnforcingHeader(t *testing.T) {
-	_, _, origin := supabaseConfig()
+	t.Setenv("SUPABASE_URL", "https://abc.supabase.co")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "pk_test_123")
 	rec := getRoot(t, http.HandlerFunc(handleRoot), "/", "")
 	enf := rec.Header().Values(enforcingHeader)
 	if len(enf) != 1 {
 		t.Fatalf("GET /: %d %s headers %q, want 1", len(enf), enforcingHeader, enf)
 	}
+	const tail = "; connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report"
 	m := bothNoncesRE.FindStringSubmatch(enf[0])
-	if m == nil || enf[0] != wantPolicy(m[1]) {
-		t.Errorf("GET /: %s = %q, want %q", enforcingHeader, enf[0], wantPolicy("<22-char nonce>"))
+	if m == nil || enf[0] != wantPolicy(m[1])+tail {
+		t.Errorf("GET /: %s = %q, want %q", enforcingHeader, enf[0], wantPolicy("<22-char nonce>")+tail)
 	}
-	if got := rec.Header().Values(reportOnlyHeader); len(got) != 1 || got[0] != reportOnlyConnectSrc(origin) {
-		t.Errorf("GET /: %s headers %q, want exactly [%q]", reportOnlyHeader, got, reportOnlyConnectSrc(origin))
+	if got := rec.Header().Values(reportOnlyHeader); len(got) != 0 {
+		t.Errorf("GET /: %s headers %q, want none", reportOnlyHeader, got)
 	}
 }
 
 // The enforcing header is pinned as a full literal through the real handler,
 // for the nonce that 16 zero bytes give, so a one-character change in csp.go
 // fails here. Style S2: the style directives sit after script-src-attr, in the
-// Recallis order. connect-src PR A: the Report-Only header carries connect-src
-// alone, pinned here for an environment without Supabase.
+// Recallis order. connect-src PR B: connect-src is enforced at the end of the
+// same header, pinned here for an environment without Supabase, and no
+// Report-Only header is sent.
 func TestCSPHeadersPinnedLiteral(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "")
@@ -154,13 +165,12 @@ func TestCSPHeadersPinnedLiteral(t *testing.T) {
 	nonceRandRead = func(b []byte) (int, error) { clear(b); return len(b), nil }
 	defer func() { nonceRandRead = orig }()
 	rec := getRoot(t, http.HandlerFunc(handleRoot), "/", "")
-	const wantEnf = "script-src 'nonce-AAAAAAAAAAAAAAAAAAAAAA' 'strict-dynamic' https: 'unsafe-inline'; script-src-attr 'none'; style-src 'nonce-AAAAAAAAAAAAAAAAAAAAAA'; style-src-attr 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	const wantEnf = "script-src 'nonce-AAAAAAAAAAAAAAAAAAAAAA' 'strict-dynamic' https: 'unsafe-inline'; script-src-attr 'none'; style-src 'nonce-AAAAAAAAAAAAAAAAAAAAAA'; style-src-attr 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self'; report-to csp; report-uri /csp-report"
 	if got := rec.Header().Get(enforcingHeader); got != wantEnf {
 		t.Errorf("GET /: %s = %q, want %q", enforcingHeader, got, wantEnf)
 	}
-	const wantRO = "connect-src 'self'; report-to csp; report-uri /csp-report"
-	if got := rec.Header().Values(reportOnlyHeader); len(got) != 1 || got[0] != wantRO {
-		t.Errorf("GET /: %s = %q, want [%q]", reportOnlyHeader, got, wantRO)
+	if got := rec.Header().Values(reportOnlyHeader); len(got) != 0 {
+		t.Errorf("GET /: %s = %q, want none", reportOnlyHeader, got)
 	}
 	if got, want := rec.Header().Get("Reporting-Endpoints"), `csp="/csp-report"`; got != want {
 		t.Errorf("GET /: Reporting-Endpoints = %q, want %q", got, want)

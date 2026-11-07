@@ -166,11 +166,11 @@ func serveIndex(w http.ResponseWriter) {
 	data = bytes.ReplaceAll(data, []byte(nonceMarker), []byte(nonce))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce))
-	// connect-src PR A: Report-Only, so nothing new is blocked; violations are
-	// reported to POST /csp-report (csp_report.go).
+	// connect-src PR B: enforced inside the one policy header, with the
+	// Supabase origin from the same supabaseConfig that /config.json uses;
+	// violations are reported to POST /csp-report (csp_report.go).
 	_, _, supaOrigin := supabaseConfig()
-	w.Header().Set("Content-Security-Policy-Report-Only", reportOnlyConnectSrc(supaOrigin))
+	w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce)+cspConnectSrc(supaOrigin))
 	w.Header().Set("Reporting-Endpoints", `csp="/csp-report"`)
 	w.Write(data)
 }
