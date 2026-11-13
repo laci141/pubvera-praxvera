@@ -1,4 +1,4 @@
-FROM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS web-builder
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS web-builder
 WORKDIR /build
 COPY go.mod ./
 COPY main.go version.go csp.go csp_report.go index.html ./
