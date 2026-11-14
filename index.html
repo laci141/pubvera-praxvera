@@ -606,6 +606,12 @@
        them; the cite bar width is set through CSSOM, which the policy allows. */
     .u-mb16.u-mb16 { margin-bottom: 16px; }
     .pager-info-note.pager-info-note { white-space:normal;text-align:center;margin-top:10px; }
+    /* respect the OS reduce-motion setting; the spinner stays (status indicator) */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; }
+      .search-btn:hover, .article-card:hover { transform: none; }
+    }
   </style>
 </head>
 <body>
