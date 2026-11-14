@@ -15,7 +15,7 @@ const vm = require("vm");
 // The worktree may hold CRLF (core.autocrlf); the index holds LF.
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8").replace(/\r\n/g, "\n");
 const start = html.indexOf("    function esc(s) {");
-const end = html.indexOf("    function expandAbs(btn) {");
+const end = html.indexOf("    function toggleAbs(btn) {");
 if (start < 0 || end < 0 || end <= start) {
   console.error("FAIL: could not locate the export/search section in index.html");
   process.exit(1);
@@ -119,7 +119,7 @@ async function search(q, total = TOTAL, perPage = 50) {
   byId("sortSelect").value = "cited";
   await run("doSearch()");
   const res = byId("resultArea").innerHTML;
-  if (res.indexOf(total + " total results") < 0) throw new Error("doSearch did not render the page: " + res.slice(0, 200));
+  if (res.indexOf(Number(total).toLocaleString("en-US") + (total === 1 ? " result" : " results")) < 0) throw new Error("doSearch did not render the page: " + res.slice(0, 200));
 }
 // CSV quotes the provenance cell when it holds commas/quotes; undo that.
 const unquote = h => (h.startsWith('"') ? h.slice(1, -1).replace(/""/g, '"') : h);

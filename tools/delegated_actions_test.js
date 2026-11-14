@@ -12,8 +12,8 @@
 //      data-action;
 //   T4 the delegated block is cut out of index.html and driven in a vm sandbox
 //      with fake elements whose data-* attributes are read from the real
-//      markup; prefill, expandAbs and pubveraSignIn are the real functions,
-//      the rest are spies;
+//      markup; prefill, toggleAbs and pubveraSignIn are the real functions,
+//      the rest are spies; Enter in #queryInput (keydown) runs doSearch;
 //   A  the three example chips are native <button type="button"> elements with
 //      font: inherit and a :focus-visible outline, none taken out of the tab
 //      order.
@@ -88,7 +88,7 @@ const chips = tags(/<button type="button" class="chip"[^>]*>([^<]*)<\/button>/g)
 const searchBtn = tags(/<button[^>]*id="searchBtn"[^>]*>/g);
 const typeSel = tags(/<select[^>]*id="typeFilter"[^>]*>/g);
 const sortSel = tags(/<select[^>]*id="sortResults"[^>]*>/g);
-const expandBtn = tags(/<button class="expand-btn"[^>]*>/g);
+const expandBtn = tags(/<button type="button" class="expand-btn"[^>]*>/g);
 const citeBtn = tags(/<button class="cite-btn"[^>]*>/g);
 const pager = tags(/<button class="dl"[^\n]*?>(← Previous|Next →)<\/button>/g);
 const signInBtn = tags(/<button[^>]*class="search-btn"[^>]*>Sign in with Google<\/button>/g);
@@ -104,8 +104,8 @@ const fnSrc = name => {
   const m = new RegExp("^    function " + name + "\\([^)]*\\) \\{\\n[\\s\\S]*?\\n    \\}$", "m").exec(html);
   return m ? m[0] : "";
 };
-const realSrc = ["prefill", "expandAbs", "pubveraSignIn"].map(fnSrc);
-check("T4 real prefill, expandAbs and pubveraSignIn found in index.html", realSrc.every(s => s !== ""));
+const realSrc = ["prefill", "toggleAbs", "pubveraSignIn"].map(fnSrc);
+check("T4 real prefill, toggleAbs and pubveraSignIn found in index.html", realSrc.every(s => s !== ""));
 
 // A fresh sandbox per case: one broken branch cannot leak into the next case.
 function harness() {
@@ -116,6 +116,7 @@ function harness() {
     fromYearSelect: { value: "" },
     toYearSelect: { value: "" },
     perPageVal: { textContent: "20" },
+    searchBtn: { disabled: false },
   };
   const L = {};
   const sb = {
@@ -133,7 +134,7 @@ function harness() {
   vm.createContext(sb);
   vm.runInContext(realSrc.join("\n"), sb);
   // Record the calls to the real functions, then run them.
-  for (const name of ["prefill", "expandAbs", "pubveraSignIn"]) {
+  for (const name of ["prefill", "toggleAbs", "pubveraSignIn"]) {
     const real = sb[name];
     sb[name] = (...a) => { calls.push([name, ...a]); return real(...a); };
   }
@@ -153,9 +154,9 @@ const untouched = els => els.queryInput.value === "" && els.fromYearSelect.value
   els.toYearSelect.value === "" && els.perPageVal.textContent === "20";
 const button = tag => ({ dataset: dataset(tag), style: {}, closest: () => null });
 
-tcase("block registers exactly one click, one change and one input listener on document", h =>
-  same(Object.keys(h.L).sort(), ["change", "click", "input"]) &&
-  h.L.click.length === 1 && h.L.change.length === 1 && h.L.input.length === 1);
+tcase("block registers exactly one click, one change, one input and one keydown listener on document", h =>
+  same(Object.keys(h.L).sort(), ["change", "click", "input", "keydown"]) &&
+  h.L.click.length === 1 && h.L.change.length === 1 && h.L.input.length === 1 && h.L.keydown.length === 1);
 
 // The three chips and the arguments their old onclick passed.
 const CHIPS = [["CAR-T 2014", "cancer", 2014, 2014], ["Glioblastoma 2005", "glioblastoma", 2005, 2005],
@@ -190,14 +191,19 @@ tcase("change on a select without data-action (#sortSelect) does nothing", h => 
   h.fire("change", { target: { id: "sortSelect", dataset: {} } });
   return same(h.calls, []) && untouched(h.els);
 });
-tcase("...read more -> expandAbs(matched button): abstract uncollapsed, button hidden", h => {
-  const removed = [];
-  const abs = { classList: { remove: c => removed.push(c) } };
-  const btn = button(expandBtn.length === 1 ? expandBtn[0][0] : "");
-  btn.closest = s => (s === ".article-abstract" ? abs : null);
+tcase("Read more -> toggleAbs(matched button): the abstract it controls loses collapsed", h => {
+  const cls = new Set(["article-abstract", "collapsed"]);
+  const abs = { classList: { toggle: c => (cls.has(c) ? (cls.delete(c), false) : (cls.add(c), true)) } };
+  const tag = expandBtn.length === 1 ? expandBtn[0][0].replace("${idx}", "3") : "";
+  const attrs = { "aria-controls": (/aria-controls="([^"]*)"/.exec(tag) || [])[1] };
+  const btn = button(tag);
+  btn.getAttribute = n => attrs[n];
+  btn.setAttribute = (n, v) => { attrs[n] = v; };
+  h.els["abs-3"] = abs;
   h.click(btn);
-  return h.calls.length === 1 && h.calls[0][0] === "expandAbs" && h.calls[0][1] === btn &&
-    h.calls[0].length === 2 && same(removed, ["collapsed"]) && btn.style.display === "none";
+  return h.calls.length === 1 && h.calls[0][0] === "toggleAbs" && h.calls[0][1] === btn &&
+    h.calls[0].length === 2 && !cls.has("collapsed") && btn.textContent === "Show less" &&
+    attrs["aria-expanded"] === "true";
 });
 tcase("Cite (template data-idx=${idx}, idx 3) -> copyBibtex(3, matched button) with a number", h => {
   const btn = button(citeBtn.length === 1 ? citeBtn[0][0].replace("${idx}", "3") : "");
