@@ -195,8 +195,8 @@
     }
     .search-panel {
       background: rgba(255, 255, 255, 0.05);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 18px;
       padding: 32px;
@@ -215,6 +215,9 @@
       gap: 16px;
       margin-bottom: 20px;
     }
+    /* From Year, To Year and Sort By in one row. Same specificity as
+       .search-grid, so the later max-width:768px rule still makes it one column. */
+    .search-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .form-group {
       display: flex;
       flex-direction: column;
@@ -290,6 +293,7 @@
     .results-header {
       font-size: 1.1rem;
       color: #93c5fd;
+      margin-top: 24px;
       margin-bottom: 20px;
       font-weight: 600;
     }
@@ -360,14 +364,15 @@
       .meta{flex:1 1 260px}
     }
     .qfilter{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;
-      padding:4px 14px;color:#e8eef7;font-size:.78rem;width:190px}
+      padding:4px 14px;color:#e8eef7;font-size:.78rem;width:190px;min-height:44px}
     .qfilter:focus{outline:none;border-color:#3b82f6}
     .qcount{color:#7dd3fc;font-size:.78rem;font-weight:600;margin-left:6px}
     .qsort{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;
-      padding:4px 12px;color:#e8eef7;font-size:.78rem;cursor:pointer}
+      padding:4px 12px;color:#e8eef7;font-size:.78rem;cursor:pointer;min-height:44px}
     .qsort:focus{outline:none;border-color:#3b82f6}
     .qsort option{background:#12162e;color:#e0e0e0}
     .pager{display:flex;justify-content:center;align-items:center;gap:14px;margin-top:24px}
+    .pager .dl{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}
     .pager .dl:disabled{opacity:.4;cursor:not-allowed}
     .pager .dl:disabled:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);color:#cdd6ea}
     .pager-info{font-size:.82rem;color:#99a;white-space:nowrap}
@@ -378,8 +383,8 @@
     }
     .article-card {
       background: rgba(255, 255, 255, 0.05);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 16px;
       padding: 24px;
@@ -431,9 +436,12 @@
       color: #d1d5db;
       line-height: 1.6;
       margin-bottom: 12px;
-      max-height: 4.5em;
-      overflow: hidden;
       position: relative;
+    }
+    /* Exactly three lines (line-height 1.6) while collapsed; the full text when not. */
+    .article-abstract.collapsed {
+      max-height: calc(1.6em * 3);
+      overflow: hidden;
     }
     .article-abstract.collapsed::after {
       content: '';
@@ -451,7 +459,11 @@
       cursor: pointer;
       font-size: 0.85rem;
       text-decoration: underline;
-      padding: 0;
+      /* WCAG 2.2 target size (2.5.8): at least 24 x 24 CSS px. */
+      min-height: 24px;
+      padding: 4px 0;
+      display: inline-flex;
+      align-items: center;
     }
     .expand-btn:hover {
       color: #bfdbfe;
@@ -512,7 +524,7 @@
       padding: 40px 20px;
       border-top: 1px solid rgba(255, 255, 255, 0.08);
       font-size: 0.85rem;
-      color: #64748b;
+      color: #94a3b8;
     }
     /* ── Legal disclaimer (glass panel) ── */
     .disclaimer {
@@ -550,6 +562,10 @@
       }
       .disclaimer {
         padding: 1rem;
+        backdrop-filter: blur(11px);
+        -webkit-backdrop-filter: blur(11px);
+      }
+      .errcard {
         backdrop-filter: blur(11px);
         -webkit-backdrop-filter: blur(11px);
       }
@@ -637,7 +653,7 @@
         <label>Keyword</label>
         <input type="text" id="queryInput" placeholder="e.g., cancer, sepsis, vaccine..." />
       </div>
-      <div class="search-grid">
+      <div class="search-grid search-grid-3">
         <div class="form-group">
           <label>From Year</label>
           <select id="fromYearSelect"></select>
@@ -646,8 +662,6 @@
           <label>To Year</label>
           <select id="toYearSelect"></select>
         </div>
-      </div>
-      <div class="search-grid">
         <div class="form-group">
           <label>Sort By</label>
           <select id="sortSelect">
@@ -1235,6 +1249,37 @@
       });
     }
 
+    // Shows a "Read more" button only when its collapsed abstract is cut off
+    // (content taller than the three-line box); a short abstract keeps none.
+    // An expanded abstract never overflows, so its "Show less" button is left
+    // alone. absTogglesWidth is the viewport width of the last evaluation.
+    let absTogglesWidth = 0;
+    let absResizeTimer = 0;
+    function applyAbsToggles() {
+      absTogglesWidth = window.innerWidth;
+      document.querySelectorAll('#resultArea .expand-btn[aria-controls]').forEach(btn => {
+        let abs = document.getElementById(btn.getAttribute('aria-controls'));
+        if (!abs || !abs.classList.contains('collapsed')) return;
+        btn.hidden = !(abs.scrollHeight > abs.clientHeight + 1);
+      });
+    }
+
+    // A width change (rotation, window resize) re-wraps the abstracts, so the
+    // buttons are evaluated again, 150 ms after the last resize event. A
+    // height-only change (mobile address bar) re-wraps nothing and is skipped.
+    function onViewportResize() {
+      clearTimeout(absResizeTimer);
+      absResizeTimer = setTimeout(() => {
+        if (window.innerWidth !== absTogglesWidth) applyAbsToggles();
+      }, 150);
+    }
+
+    // Header count: "1,243 results", "1 result".
+    function resultsHeaderText(total) {
+      let n = Number(total);
+      return n.toLocaleString('en-US') + (n === 1 ? ' result' : ' results');
+    }
+
     // Renders the card list plus its toolbar. Used both by the initial search
     // and by client-side re-sorting (no extra API call).
     function renderResults(articles, total) {
@@ -1249,7 +1294,7 @@
         }
         lastArticles = [];
         resultDiv.innerHTML = `<div class="results-header">No ${esc(currentType)} articles on this page.</div>` +
-          metaRow(`0 / ${pageRows.length} shown · page ${currentPage} of ${totalPagesFor(lastTotal, lastPerPage)}`,
+          metaRow(`Page ${currentPage} of ${totalPagesFor(lastTotal, lastPerPage)}`,
                   'search', 'praxvera-search.json');
         let typeReset = document.getElementById('typeFilter');
         if (typeReset) typeReset.value = currentType;
@@ -1264,11 +1309,8 @@
 
       let maxCites = Math.max(...articles.map(a => a.citations || 0));
       let totalPages = totalPagesFor(lastTotal, lastPerPage);
-      let allOnPage = pageRows.length;
-      let metaText = currentType === 'all'
-        ? `${articles.length} / ${lastTotal} total · page ${currentPage} of ${totalPages}`
-        : `${articles.length} / ${allOnPage} shown · page ${currentPage} of ${totalPages}`;
-      let html = `<div class="results-header">${esc(String(total))} total results · showing ${esc(String(articles.length))}</div>`;
+      let metaText = `Page ${currentPage} of ${totalPages}`;
+      let html = `<div class="results-header">${esc(resultsHeaderText(total))}</div>`;
       html += metaRow(metaText, 'search', 'praxvera-search.json');
       html += '<div class="articles-grid">';
 
@@ -1278,8 +1320,12 @@
         let retractedBadge = a.is_retracted === true ? '<span class="badge badge-retracted">OpenAlex marks this work as retracted</span>' : '';
         let citeBar = maxCites > 0 ? Math.ceil((a.citations / maxCites) * 100) : 0;
         let abstracts = a.abstract || '';
-        let showMore = abstracts.length > 200;
-        let shortAbs = showMore ? abstracts.substring(0, 200) + '...' : abstracts;
+        // The full abstract is rendered; CSS collapses it to three lines and
+        // applyAbsToggles unhides the button only when it overflows.
+        let absId = abstracts ? ` id="abs-${idx}"` : '';
+        let absBtn = abstracts
+          ? `<button type="button" class="expand-btn" data-action="toggleAbs" aria-expanded="false" aria-controls="abs-${idx}" hidden>Read more</button>`
+          : '';
 
         let titleInner = highlight(safeRich(a.title), lastQuery);
         let titleHtml = a.url
@@ -1299,10 +1345,10 @@
             ${retractedBadge}
           </div>
           <div class="article-authors">${esc(a.authors)}</div>
-          <div class="article-abstract collapsed">
-            ${highlight(safeRich(shortAbs), lastQuery)}
-            ${showMore ? `<button class="expand-btn" data-action="expandAbs">...read more</button>` : ''}
+          <div class="article-abstract collapsed"${absId}>
+            ${highlight(safeRich(abstracts), lastQuery)}
           </div>
+          ${absBtn}
           <div class="card-actions">
             ${linkHtml}
             <button class="cite-btn" data-action="copyBibtex" data-idx="${idx}">📋 Cite</button>
@@ -1323,6 +1369,7 @@
       </div>` + pagerNote(lastTotal);
       resultDiv.innerHTML = html;
       applyCiteWidths();
+      applyAbsToggles();
 
       // Restore toolbar state across re-renders.
       let sortEl = document.getElementById('sortResults');
@@ -1586,11 +1633,16 @@
       }
     }
 
-    function expandAbs(btn) {
-      let absDiv = btn.closest('.article-abstract');
-      absDiv.classList.remove('collapsed');
-      btn.style.display = 'none';
+    function toggleAbs(btn) {
+      let absDiv = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!absDiv) return;
+      let collapsed = absDiv.classList.toggle('collapsed');
+      btn.textContent = collapsed ? 'Read more' : 'Show less';
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     }
+
+    // On window, not document: resize is not a delegated data-action event.
+    window.addEventListener('resize', onViewportResize);
 
     function copyBibtex(idx, btn) {
       let a = lastArticles[idx];
@@ -1641,7 +1693,7 @@
       const a = b.dataset.action;
       if (a === 'prefill') prefill(b.dataset.q, Number(b.dataset.from), Number(b.dataset.to));
       else if (a === 'doSearch') doSearch();
-      else if (a === 'expandAbs') expandAbs(b);
+      else if (a === 'toggleAbs') toggleAbs(b);
       else if (a === 'copyBibtex') copyBibtex(Number(b.dataset.idx), b);
       else if (a === 'pageNav') pageNav(Number(b.dataset.dir));
       else if (a === 'pubveraSignIn') pubveraSignIn();
@@ -1653,6 +1705,15 @@
     });
     document.addEventListener('input', e => {
       if (e.target.id === 'perPageSlider') document.getElementById('perPageVal').textContent = e.target.value;
+    });
+    // Enter in the Keyword field runs the search, as the button does; not while
+    // an IME is composing, and not while a search is already running.
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.isComposing || !e.target || e.target.id !== 'queryInput') return;
+      const btn = document.getElementById('searchBtn');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      doSearch();
     });
   </script>
 

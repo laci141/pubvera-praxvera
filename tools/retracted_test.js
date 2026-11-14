@@ -15,7 +15,7 @@ const vm = require("vm");
 // The worktree may hold CRLF (core.autocrlf); the index holds LF.
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8").replace(/\r\n/g, "\n");
 const start = html.indexOf("    function esc(s) {");
-const end = html.indexOf("    function expandAbs(btn) {");
+const end = html.indexOf("    function toggleAbs(btn) {");
 if (start < 0 || end < 0 || end <= start) {
   console.error("FAIL: could not locate the export/search section in index.html");
   process.exit(1);
