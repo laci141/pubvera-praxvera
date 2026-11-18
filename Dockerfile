@@ -9,7 +9,7 @@ COPY main.go version.go csp.go csp_report.go index.html ./
 ARG APP_VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.appVersion=${APP_VERSION}" -o /out/server .
 
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 # zlib is upgraded by name for CVE-2026-4738 (1.3.2-r1 -> 1.4-r0, Grype
 # --only-fixed); a bare apk upgrade would pull in every package.
 RUN apk add --no-cache ca-certificates && apk upgrade --no-cache zlib
