@@ -12,7 +12,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.a
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # zlib is upgraded by name for CVE-2026-4738 (1.3.2-r1 -> 1.4-r0, Grype
 # --only-fixed); a bare apk upgrade would pull in every package.
-RUN apk add --no-cache ca-certificates && apk upgrade --no-cache zlib
+# OpenSSL CVEs fixed in 3.5.9-r1: libcrypto3 and libssl3 are upgraded by
+# name as well, never a bare apk upgrade.
+RUN apk add --no-cache ca-certificates && apk upgrade --no-cache zlib libcrypto3 libssl3
 RUN addgroup -S -g 10001 app && adduser -S -u 10001 -G app app
 WORKDIR /app
 COPY --from=web-builder /out/server ./server
